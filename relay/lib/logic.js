@@ -166,7 +166,8 @@ export function sanitizeProposalInput(body, selfId) {
 export function commonWindows(sigs, today, exclude) {
   if (!sigs.length || sigs.some((s) => !s || !Array.isArray(s.free))) return [];
   let common = sigs[0].free.filter((w) => sigs.every((s) => s.free.includes(w)));
-  if (exclude) common = common.filter((w) => w !== exclude);
+  const ex = [].concat(exclude || []);
+  common = common.filter((w) => !ex.includes(w));
   return [...new Set(common)].sort((a, b) => windowKey(a, today) - windowKey(b, today));
 }
 

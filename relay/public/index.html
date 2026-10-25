@@ -81,7 +81,7 @@
 
   function load() {
     if (!code || !k) { showMsg('This link is missing its circle code or key. Ask your Cubbie for the log link.'); return; }
-    fetch('/api/circles/' + encodeURIComponent(code) + '/log?limit=50&k=' + encodeURIComponent(k), { cache: 'no-store' })
+    fetch('/api/circles/' + encodeURIComponent(code) + '/log?limit=50', { cache: 'no-store', headers: { Authorization: 'Bearer ' + k } })
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (x) { if (x.ok) render(x.j); else showMsg(x.j.error || 'Could not load the log.'); })
       .catch(function () { showMsg('Cannot reach the server. Retrying…'); });

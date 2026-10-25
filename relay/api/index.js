@@ -27,11 +27,16 @@ function rateLimit(req) {
   list.push(t);
   hits.set(ip, list);
   if (hits.size > 5000) hits.clear();
-  if (list.length > 30) throw new HttpError(429, 'rate_limited', 'Too many requests, please slow down and try again in a few minutes.');
+  if (list.length > 120) throw new HttpError(429, 'rate_limited', 'Too many requests, please slow down and try again in a few minutes.');
 }
 
 async function readBody(req) {
-  let b = req.body;
+  let b;
+  try {
+    b = req.body; // Vercel's lazy body parser throws on invalid JSON
+  } catch {
+    throw new HttpError(400, 'bad_json', 'Request body is not valid JSON.');
+  }
   if (b === undefined || b === null) {
     const len = Number(req.headers['content-length'] || 0);
     if (len > MAX_BODY) throw new HttpError(400, 'body_too_large', 'Request body is too large (32KB max).');
@@ -247,7 +252,13 @@ const H = {
         const dates = sigs.filter(Boolean).flatMap((s) => (s.courses || []).filter((c) => c.code === p.course).flatMap((c) => c.events.map((e) => e.date))).filter((d) => d >= today).sort();
         beforeDate = dates[0];
       }
-      const win = sigs.every(Boolean) ? L.nextBestWindow(sigs, { declined: p.window, today, beforeDate }) : null;
+      // exclude every window already turned down in this counter chain, so counters cannot ping-pong
+      const declined = [p.window];
+      for (let q = p, i = 0; q && q.parent_id && i < 10; i++) {
+        q = await ctx.store.getProposal(q.parent_id);
+        if (q && q.circle_code === code) declined.push(q.window);
+      }
+      const win = sigs.every(Boolean) ? L.nextBestWindow(sigs, { declined, today, beforeDate }) : null;
       if (win) {
         status = 'countered';
         counter = {

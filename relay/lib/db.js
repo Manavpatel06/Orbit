@@ -86,6 +86,9 @@ async function ensureIndexes(db) {
     db.collection('proposals').createIndex({ id: 1 }, { unique: true }),
     db.collection('proposals').createIndex({ circle_code: 1, created_at: 1 }),
     db.collection('log').createIndex({ circle_code: 1, ts: -1 }),
+    // bound growth: old log entries and proposals expire after 30 days
+    db.collection('log').createIndex({ ts: 1 }, { expireAfterSeconds: 30 * 86400 }),
+    db.collection('proposals').createIndex({ created_at: 1 }, { expireAfterSeconds: 30 * 86400 }),
   ]);
 }
 

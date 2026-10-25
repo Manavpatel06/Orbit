@@ -12,6 +12,7 @@ Exit codes: 0 ok, 2 not in a circle, 3 circle/proposal not found, 4 server unrea
 from __future__ import annotations
 
 import argparse
+from http.client import HTTPException
 import json
 import os
 import sys
@@ -93,14 +94,13 @@ def http(method: str, base: str, path: str, body=None, token: str | None = None,
     if query:
         url += "?" + urllib.parse.urlencode(query)
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "orbit-cubbie/1.0")
+    headers = {"Accept": "application/json", "User-Agent": "orbit-cubbie/1.0"}
     if data is not None:
-        req.add_header("Content-Type", "application/json")
+        headers["Content-Type"] = "application/json"
     if token:
-        req.add_header("Authorization", "Bearer " + token)
+        headers["Authorization"] = "Bearer " + token
     try:
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
@@ -113,10 +113,10 @@ def http(method: str, base: str, path: str, body=None, token: str | None = None,
             fail(f"{msg} (token invalid or removed; run join again).", 5)
         if e.code == 404:
             fail(msg, 3)
-        if e.code == 400:
+        if e.code in (400, 409):
             fail(msg, 6)
         fail(msg, 7)
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+    except (urllib.error.URLError, HTTPException, TimeoutError, OSError, ValueError) as e:
         reason = getattr(e, "reason", e)
         fail(f"cannot reach the Orbit server at {base} ({reason}).", 4)
     try:
@@ -210,7 +210,7 @@ def render_feed(name: str, count: int, feed: dict) -> None:
     for p in feed.get("proposals") or []:
         if p.get("status") == "accepted":
             accepted.append(p)
-        elif p.get("status") in ("open", "countered") and me_id in (p.get("to_ids") or []) and not p.get("my_response"):
+        elif p.get("status") == "open" and me_id in (p.get("to_ids") or []) and not p.get("my_response"):
             waiting.append(p)
     for p in waiting[:3]:
         bits = [p.get("course"), pretty_window(p.get("window")) + (" " + p["time"] if p.get("time") else "")]

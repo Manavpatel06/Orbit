@@ -81,7 +81,7 @@ Pick at most 2 nudges, highest value first: a proposal waiting on the student, t
 1. Never propose without the student's yes. Show it first: "Ask Manas to study CSE 576 Thu evening?"
 2. After yes: `python3 scripts/orbit.py propose --to "<name>" --kind study --course "CSE 576" --window thu-evening`. Use `--kind hangout` for non-study plans. Add `--note` only if the student gave one.
 3. Say: "Asked. I will tell you when they answer."
-4. When a plan is accepted by everyone (it shows up in the feed), pick the exact time from the student's own calendar, never from the server. Look at the student's Google Calendar in that window and suggest a start time. Ask "7 pm works. Add it to your calendar? yes?" After yes, add the event to the student's Google Calendar and confirm the exact time. Tell the student they can text the friend the exact time themselves.
+4. When a plan is accepted by everyone (it shows up in the feed), pick the exact time from the student's own calendar, never from the server. Look at the student's Google Calendar in that window and suggest a start time. Ask "7 pm works. Add it to your calendar? yes?" After yes, add the event to the student's Google Calendar and confirm the exact time. Tell the student they can text the friend the exact time themselves. Remember the plan's id once it is on the calendar, and never add the same plan twice (accepted plans stay in the feed for a week).
 
 ## Responding
 

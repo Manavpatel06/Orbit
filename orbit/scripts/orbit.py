@@ -22,7 +22,7 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-DEFAULT_SERVER = "https://orbit-circle.vercel.app"
+DEFAULT_SERVER = "https://orbit-cubbie.vercel.app"
 SAMPLE = Path(__file__).resolve().parent.parent / "assets" / "sample_feed.json"
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PARTS = ["morning", "afternoon", "evening"]

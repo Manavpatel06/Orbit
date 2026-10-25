@@ -19,7 +19,7 @@ Do not use it for a solo study plan (use the study plan Skill), for emailing pro
 
 ## How it talks to the Orbit server
 
-This Skill sends the signals the student agrees to share to the Orbit circle server at orbit-circle.vercel.app over HTTPS. Nothing else is sent: never grades, assignment content, messages, or exact calendar times.
+This Skill sends the signals the student agrees to share to the Orbit circle server at orbit-cubbie.vercel.app over HTTPS. Nothing else is sent: never grades, assignment content, messages, or exact calendar times.
 
 What can be shared, each only if the student says yes:
 - busy level (light, busy or packed), estimated from deadlines and calendar. It is a workload estimate, never a mood or stress label

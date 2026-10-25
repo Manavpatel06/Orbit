@@ -110,7 +110,8 @@ orbit/            the Cubbie Skill
   scripts/orbit.py  stdlib-only client
   assets/sample_feed.json
 relay/            Vercel project: API, negotiation logic, site (landing, /demo, /circle live board)
-tests/            relay tests (in-memory MongoDB) and client tests (stub server)
+foundit/          FoundIt, a separate Cubbie Skill that finds note photos lost in the gallery (see foundit/README.md)
+tests/            relay tests (in-memory MongoDB) and client tests (stub server); tests/foundit for FoundIt
 ```
 
 ## Run the tests

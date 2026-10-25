@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Orbit client: lets a student's Cubbie share small opt-in signals with a friend circle.
 
-Talks to the Orbit relay (JSON over HTTPS). State (circles, tokens, consent) is kept in
-~/.config/orbit/state.json with mode 600. The token is never printed except inside the
-log-link URL fragment.
+Talks to the Orbit relay (JSON over HTTPS). State (circles, tokens, consent, and small
+bookkeeping such as seen items) is kept in ~/.config/orbit/state.json with mode 600. The
+token is never printed except inside the log-link URL fragment. Keys added after v1 are
+created lazily, so an existing v1 state file keeps working unchanged.
 
 Exit codes: 0 ok, 2 not in a circle, 3 circle/proposal not found, 4 server unreachable,
 5 auth rejected, 6 bad input, 7 other server error.
@@ -15,11 +16,12 @@ import argparse
 from http.client import HTTPException
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_SERVER = "https://orbit-cubbie.vercel.app"
@@ -27,6 +29,15 @@ SAMPLE = Path(__file__).resolve().parent.parent / "assets" / "sample_feed.json"
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PARTS = ["morning", "afternoon", "evening"]
 CONSENT_KEYS = ["busy", "big_days", "free", "courses", "help", "wins"]
+MAX_WINDOWS = 5        # windows per proposal, ranked best first
+MAX_SHOWN = 5          # suggestions printed per feed
+MAX_WAITING = 3        # proposals waiting on the student printed per feed
+MAX_ACCEPTED = 2       # accepted plans printed per feed
+SEEN_DAYS = 7          # a shown item stays hidden from --new-only and inbox for this long
+CALENDAR_DAYS = 30     # mark-added remembers a plan for this long
+MAX_SEEN = 500
+MAX_REMEMBERED = 100   # proposal id -> window cache, so a busy answer can say what was busy
+DEFAULT_LOOKBACK = timedelta(hours=24)  # first inbox run, when nothing was read before
 
 
 def fail(message: str, code: int):
@@ -127,6 +138,22 @@ def http(method: str, base: str, path: str, body=None, token: str | None = None,
 
 # ---------- helpers ----------
 
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def ts_str(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_ts(s) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def parse_today(s: str | None) -> date:
     if not s:
         return date.today()
@@ -155,6 +182,44 @@ def pretty_window(w: str | None) -> str:
     if not w:
         return ""
     return w.replace("-", " ").capitalize()
+
+
+def fmt_date(iso) -> str:
+    try:
+        d = date.fromisoformat(str(iso))
+    except ValueError:
+        return ""
+    return f"{d:%a} {d:%b} {d.day}"
+
+
+def fmt_time(hhmm) -> str:
+    try:
+        h, m = (int(x) for x in str(hhmm).split(":"))
+    except ValueError:
+        return ""
+    return f"{h % 12 or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+
+
+def when_text(p: dict) -> str:
+    """'Thu Oct 29 · 7:00 PM', or 'Thu evening · 7:00 PM' when the server sent no date."""
+    parts = [fmt_date(p.get("date")) or pretty_window(p.get("window")), fmt_time(p.get("time"))]
+    return " · ".join(x for x in parts if x)
+
+
+def what_text(p: dict) -> str:
+    if p.get("kind") == "study":
+        return f"Study {p['course']}" if p.get("course") else "Study session"
+    if p.get("kind") == "hangout":
+        return "Hangout"
+    return "Plan"
+
+
+def ask_text(p: dict) -> str:
+    if p.get("kind") == "study":
+        return f"study {p['course']}" if p.get("course") else "study"
+    if p.get("kind") == "hangout":
+        return "hang out"
+    return "make a plan"
 
 
 def csv(s: str | None) -> list[str]:
@@ -189,6 +254,56 @@ def parse_help(items: list[str], flag: str) -> list[dict]:
     return out
 
 
+# ---------- seen / calendar / window bookkeeping (state keys added after v1) ----------
+
+def prune_seen(seen: dict, now: datetime) -> dict:
+    keep = {}
+    for key, ts in seen.items():
+        dt = parse_ts(ts)
+        if dt and now - dt < timedelta(days=SEEN_DAYS):
+            keep[key] = ts
+    return dict(sorted(keep.items(), key=lambda kv: kv[1])[-MAX_SEEN:])
+
+
+def prune_added(added: dict, now: datetime) -> dict:
+    keep = {}
+    for pid, ts in added.items():
+        dt = parse_ts(ts)
+        if dt and now - dt < timedelta(days=CALENDAR_DAYS):
+            keep[pid] = ts
+    return keep
+
+
+def remember_windows(st: dict, proposals: list) -> None:
+    cache = st.setdefault("proposal_windows", {})
+    for p in proposals:
+        if isinstance(p, dict) and p.get("id") and p.get("window"):
+            cache.pop(p["id"], None)  # re-insert so the newest sit at the end
+            cache[p["id"]] = p["window"]
+    while len(cache) > MAX_REMEMBERED:
+        cache.pop(next(iter(cache)))
+
+
+def suggestion_key(s: dict) -> str:
+    ev = s.get("event") or {}
+    parts = (s.get("type"), s.get("friend_id"), s.get("course"), s.get("window"), ev.get("date") or s.get("date"))
+    return "|".join(str(x or "") for x in parts)
+
+
+def needs_key(p: dict) -> str:
+    return f"needs|{p.get('id')}|{p.get('window')}|{p.get('round') or 1}"
+
+
+def locked_key(p: dict) -> str:
+    return f"locked|{p.get('id')}"
+
+
+def id_tag(st: dict, pid) -> str:
+    if pid and pid in (st.get("calendar_added") or {}):
+        return f"(id {pid}, already on your calendar)"
+    return f"(id {pid})"
+
+
 # ---------- sample mode ----------
 
 def load_sample() -> dict:
@@ -200,28 +315,103 @@ def load_sample() -> dict:
 
 # ---------- rendering ----------
 
-def render_feed(name: str, count: int, feed: dict) -> None:
-    print(f"Circle: {name} ({count} friends)")
-    sugg = feed.get("suggestions") or []
-    for s in sugg[:5]:
-        print(f"- {s.get('text', '')}")
+def select_feed(st: dict, feed: dict, now: datetime, new_only: bool):
+    """Pick what a feed run prints. With new_only, drop items already shown (and mark the printed ones)."""
+    seen = prune_seen(st.get("seen") or {}, now)
     me_id = (feed.get("me") or {}).get("member_id")
+    sugg = feed.get("suggestions") or []
     waiting, accepted = [], []
     for p in feed.get("proposals") or []:
         if p.get("status") == "accepted":
             accepted.append(p)
         elif p.get("status") == "open" and me_id in (p.get("to_ids") or []) and not p.get("my_response"):
             waiting.append(p)
-    for p in waiting[:3]:
-        bits = [p.get("course"), pretty_window(p.get("window")) + (" " + p["time"] if p.get("time") else "")]
-        detail = ", ".join(b for b in bits if b)
-        print(f"Waiting on you: {p.get('from_name', 'Someone')} proposed {p.get('kind', 'a plan')}, {detail} (id {p['id']})")
-    for p in accepted[:2]:
-        who = p.get("from_name") if p.get("from_id") != me_id else ", ".join(p.get("to_names") or [])
-        print(f"Plan set: {p.get('kind', 'plan')} with {who}, {pretty_window(p.get('window'))}"
-              + (f" {p['time']}" if p.get("time") else "") + ".")
-    if not sugg and not waiting and not accepted:
-        print("Nothing new from your circle right now.")
+    if new_only:
+        sugg = [s for s in sugg if suggestion_key(s) not in seen]
+        waiting = [p for p in waiting if needs_key(p) not in seen]
+        accepted = [p for p in accepted if locked_key(p) not in seen]
+    sugg, waiting, accepted = sugg[:MAX_SHOWN], waiting[:MAX_WAITING], accepted[:MAX_ACCEPTED]
+    if new_only:
+        for s in sugg:
+            seen[suggestion_key(s)] = ts_str(now)
+        for p in waiting:
+            seen[needs_key(p)] = ts_str(now)
+        for p in accepted:
+            seen[locked_key(p)] = ts_str(now)
+        st["seen"] = prune_seen(seen, now)
+    return sugg, waiting, accepted
+
+
+def render_feed(st: dict, name: str, count: int, sugg, waiting, accepted, quiet: bool) -> None:
+    lines = [f"- {s.get('text', '')}" for s in sugg]
+    lines += [f"Waiting on you: {p.get('from_name', 'Someone')} wants to {ask_text(p)} · {when_text(p)} {id_tag(st, p.get('id'))}"
+              for p in waiting]
+    lines += [f"Locked in: {what_text(p)} · {when_text(p)} {id_tag(st, p.get('id'))}" for p in accepted]
+    if not lines:
+        if not quiet:
+            print("Nothing new from your circle right now.")
+        return
+    print(f"Circle: {name} ({count} friends)")
+    for line in lines:
+        print(line)
+
+
+def update_line(st: dict, u: dict) -> str:
+    pid = u.get("id")
+    status = u.get("status")
+    if status == "accepted":
+        return f"Locked in: {what_text(u)} · {when_text(u)} {id_tag(st, pid)}"
+    if status == "declined":
+        return f"No shared time for {what_text(u)} this week."
+    if status == "countered":
+        return f"Countered: {what_text(u)} ({when_text(u)}) needs a new time."
+    if status == "open":  # still open but moved to another window
+        mover = u.get("moved_by_name") or "A friend"
+        return f"Update: {mover}'s Cubbie moved your plan to {when_text(u)}."
+    return f"Update: {what_text(u)} · {when_text(u)} is {status or 'updated'}."
+
+
+def inbox_lines(st: dict, res: dict, now: datetime) -> list[str]:
+    """Lines for an inbox answer. A pending request is printed once per window/round, so a
+    quiet check-in does not repeat it; updates are already limited to what changed since last time."""
+    seen = prune_seen(st.get("seen") or {}, now)
+    needs = res.get("needs_answer") or []
+    updates = res.get("updates") or []
+    lines = []
+    for p in needs:
+        key = needs_key(p)
+        if key in seen:
+            continue
+        seen[key] = ts_str(now)
+        lines.append(f"Needs you: {p.get('from_name', 'Someone')} wants to {ask_text(p)} · {when_text(p)} {id_tag(st, p.get('id'))}")
+    lines += [update_line(st, u) for u in updates]
+    lines += [n["text"] for n in res.get("new_nudges") or [] if n.get("text")]
+    st["seen"] = prune_seen(seen, now)
+    remember_windows(st, needs + updates)
+    return lines
+
+
+def respond_lines(ans: str, prop: dict, res: dict, prev: str | None) -> list[str]:
+    counter = res.get("counter")
+    status = prop.get("status")
+    if ans == "busy":
+        said = "Your Cubbie said busy" + (f" for {pretty_window(prev)}" if prev else "")
+        if res.get("moved"):
+            rnd = f" (round {prop['round']})" if prop.get("round") else ""
+            return [f"{said}. Moved to {pretty_window(prop.get('window'))}{rnd}."]
+        if status == "declined":
+            return [f"{said}. No shared time this week."]
+        return [f"{said}."]
+    if ans == "yes":
+        if status == "accepted":
+            return [f"Locked in: {what_text(prop)} · {when_text(prop)}"]
+        return [f"Said yes to {what_text(prop)} · {when_text(prop)}. Waiting on the others."]
+    lines = [f"You said no to {what_text(prop)} · {when_text(prop)}."]
+    if counter:
+        lines.append(f"Counter proposed: {when_text(counter)} (id {counter.get('id')}).")
+    elif status == "declined":
+        lines.append("No shared time this week.")
+    return lines
 
 
 def render_members(members: list) -> None:
@@ -245,17 +435,37 @@ def consent_line(c: dict) -> str:
     return ", ".join(f"{k.replace('_', '-')} {'yes' if c.get(k) else 'no'}" for k in CONSENT_KEYS)
 
 
+# ---------- feed core (shared by the server path and --sample) ----------
+
+def show_feed(args, st: dict, name: str, count: int, feed: dict) -> None:
+    now = now_utc()
+    sugg, waiting, accepted = select_feed(st, feed, now, args.new_only)
+    remember_windows(st, feed.get("proposals") or [])
+    if args.json:
+        emit({**feed, "suggestions": sugg})
+    else:
+        render_feed(st, name, count, sugg, waiting, accepted, quiet=args.new_only)
+
+
 # ---------- commands ----------
 
 def cmd_sample(args) -> None:
+    """--sample: fixtures only. Works on an in-memory state, never reads or writes the saved one."""
     sample = load_sample()
     c = args.command
     circle = sample.get("circle", {})
+    st: dict = {}
     if c == "feed":
+        show_feed(args, st, circle.get("name", "Sample"), len(sample.get("friends", [])), sample)
+    elif c == "inbox":
+        res = sample.get("inbox") or {}
         if args.json:
-            emit({k: sample.get(k) for k in ("me", "friends", "proposals", "suggestions")})
+            emit(res)
         else:
-            render_feed(circle.get("name", "Sample"), len(sample.get("friends", [])), sample)
+            for line in inbox_lines(st, res, now_utc()):
+                print(line)
+    elif c == "mark-added":
+        print(f"sample mode: nothing saved (would mark {args.id} as on your calendar).")
     elif c == "members":
         if args.json:
             emit({"code": circle.get("code"), "name": circle.get("name"), "members": sample.get("members", [])})
@@ -410,18 +620,47 @@ def get_members(st: dict, code: str, circ: dict) -> dict:
 def cmd_feed(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
     today = parse_today(args.today)
-    base = server_url(st)
-    feed = http("GET", base, f"/circles/{code}/feed", token=circ["token"], query={"today": today.isoformat()})
-    if args.json:
-        emit(feed)
-        return
+    feed = http("GET", server_url(st), f"/circles/{code}/feed", token=circ["token"], query={"today": today.isoformat()})
     count = len(feed.get("friends") or [])
-    try:
-        info = get_members(st, code, circ)
-        count = max(len(info.get("members", [])) - 1, 0)
-    except SystemExit:
-        pass
-    render_feed(circ.get("name") or code, count, feed)
+    if not args.json:
+        try:
+            info = get_members(st, code, circ)
+            count = max(len(info.get("members", [])) - 1, 0)
+        except SystemExit:
+            pass
+    show_feed(args, st, circ.get("name") or code, count, feed)
+    save_state(st)
+
+
+def cmd_inbox(args, st: dict) -> None:
+    code, circ = pick_circle(st, args.circle)
+    today = parse_today(args.today)
+    since = ((st.get("last_inbox") or {}).get(code)) or ts_str(now_utc() - DEFAULT_LOOKBACK)
+    res = http("GET", server_url(st), f"/circles/{code}/inbox", token=circ["token"],
+               query={"since": since, "today": today.isoformat()})
+    if args.json:
+        emit(res)
+    else:
+        for line in inbox_lines(st, res, now_utc()):
+            print(line)
+    # Only after printing, so a failed or interrupted run is retried next time.
+    st.setdefault("last_inbox", {})[code] = res.get("now") or ts_str(now_utc())
+    save_state(st)
+
+
+def cmd_mark_added(args, st: dict) -> None:
+    pid = (args.id or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{8}", pid):
+        fail(f"bad --id '{args.id}': use the 8 character proposal id from inbox or feed.", 6)
+    now = now_utc()
+    added = prune_added(st.get("calendar_added") or {}, now)
+    added[pid] = ts_str(now)
+    st["calendar_added"] = added
+    save_state(st)
+    if args.json:
+        emit({"id": pid, "marked": True})
+    else:
+        print(f"Marked {pid} as on your calendar. It will not be added again.")
 
 
 def resolve_targets(members: list, me_id: str, targets: list[str]) -> list[str]:
@@ -447,16 +686,25 @@ def cmd_propose(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
     if args.kind not in ("study", "hangout"):
         fail(f"bad --kind '{args.kind}': use study or hangout.", 6)
-    window = check_window(args.window)
+    windows: list[str] = []
+    for tok in csv(args.windows):
+        w = check_window(tok)
+        if w not in windows:
+            windows.append(w)
+    if not windows:
+        fail("--windows needs at least one window, e.g. --windows thu-evening,tue-evening.", 6)
+    if len(windows) > MAX_WINDOWS:
+        fail(f"at most {MAX_WINDOWS} windows per proposal (best first).", 6)
     if args.time:
         try:
             hh, mm = args.time.split(":")
             assert 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59 and len(mm) == 2
         except (ValueError, AssertionError):
             fail(f"bad --time '{args.time}': use HH:MM, e.g. 19:00.", 6)
+    today = parse_today(args.today)
     members = get_members(st, code, circ).get("members", [])
     to = resolve_targets(members, circ["member_id"], args.to)
-    body = {"to": to, "kind": args.kind, "window": window}
+    body = {"to": to, "kind": args.kind, "windows": windows, "today": today.isoformat()}
     if args.course:
         body["course"] = args.course.strip()
     if args.time:
@@ -464,31 +712,41 @@ def cmd_propose(args, st: dict) -> None:
     if args.note:
         body["note"] = args.note.strip()
     p = http("POST", server_url(st), f"/circles/{code}/proposals", body, token=circ["token"])
+    remember_windows(st, [p])
+    save_state(st)
     if args.json:
         emit(p)
         return
     who = ", ".join(names_of(members, to))
-    when = pretty_window(window) + (f" {args.time}" if args.time else "")
-    print(f"Proposed {args.kind} to {who}: {when} (id {p.get('id')})")
+    msg = f"Proposed {what_text(p)} to {who}: {when_text(p)} (id {p.get('id')})."
+    if len(windows) > 1:
+        msg += f" Backups: {', '.join(pretty_window(w) for w in windows[1:])}."
+    print(msg)
 
 
 def cmd_respond(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
     ans = args.answer.strip().lower()
-    if ans not in ("yes", "no"):
-        fail(f"bad --answer '{args.answer}': use yes or no.", 6)
-    today = parse_today(args.today)
-    res = http("POST", server_url(st), f"/proposals/{args.id}/respond",
-               {"answer": ans, "today": today.isoformat()}, token=circ["token"])
+    if ans not in ("yes", "no", "busy"):
+        fail(f"bad --answer '{args.answer}': use yes, no or busy.", 6)
+    body: dict = {"answer": ans, "today": parse_today(args.today).isoformat()}
+    if ans == "busy":
+        if args.free is None:
+            fail("busy needs --free with your student's current free windows (use --free \"\" for none).", 6)
+        body["free_windows"] = [check_window(t) for t in csv(args.free)]
+    elif args.free is not None:
+        fail("--free only goes with --answer busy.", 6)
+    prev = (st.get("proposal_windows") or {}).get(args.id)
+    res = http("POST", server_url(st), f"/proposals/{args.id}/respond", body, token=circ["token"])
+    prop = res.get("proposal") or {}
+    prop.setdefault("id", args.id)
+    remember_windows(st, [prop])
+    save_state(st)
     if args.json:
         emit(res)
         return
-    prop = res.get("proposal") or {}
-    print(f"You said {ans} to proposal {args.id}. Status: {prop.get('status', 'unknown')}.")
-    c = res.get("counter")
-    if c:
-        print(f"Counter proposed for {pretty_window(c.get('window'))}"
-              + (f" {c['time']}" if c.get("time") else "") + f" (id {c.get('id')}).")
+    for line in respond_lines(ans, prop, res, prev):
+        print(line)
 
 
 def cmd_members(args, st: dict) -> None:
@@ -534,6 +792,7 @@ def cmd_leave(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
     http("POST", server_url(st), f"/circles/{code}/leave", {}, token=circ["token"])
     st["circles"].pop(code, None)
+    (st.get("last_inbox") or {}).pop(code, None)
     if st.get("default") == code:
         st["default"] = next(iter(st["circles"]), None)
     save_state(st)
@@ -598,16 +857,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--win", action="append")
     s = add("feed")
     s.add_argument("--today")
+    s.add_argument("--new-only", action="store_true",
+                   help="hide suggestions and requests already shown; print nothing when there is nothing new")
+    s = add("inbox")
+    s.add_argument("--today")
+    s = add("mark-added")
+    s.add_argument("--id", required=True)
     s = add("propose")
     s.add_argument("--to", action="append", required=True)
     s.add_argument("--kind", required=True)
     s.add_argument("--course")
-    s.add_argument("--window", required=True)
+    s.add_argument("--windows", "--window", dest="windows", required=True,
+                   help="ranked best first, e.g. tue-evening,thu-evening (--window also works)")
     s.add_argument("--time")
     s.add_argument("--note")
+    s.add_argument("--today")
     s = add("respond")
     s.add_argument("--id", required=True)
-    s.add_argument("--answer", required=True)
+    s.add_argument("--answer", required=True, help="yes, no or busy")
+    s.add_argument("--free", help="with busy: your student's current free windows, comma separated")
     s.add_argument("--today")
     add("members")
     s = add("log")
@@ -631,9 +899,10 @@ def main() -> None:
     elif c == "consent":
         cmd_consent(args, st)
     else:
-        {"share": cmd_share, "feed": cmd_feed, "propose": cmd_propose, "respond": cmd_respond,
-         "members": cmd_members, "log": cmd_log, "log-link": cmd_log_link, "pause": cmd_toggle,
-         "resume": cmd_toggle, "leave": cmd_leave, "status": cmd_status}[c](args, st)
+        {"share": cmd_share, "feed": cmd_feed, "inbox": cmd_inbox, "mark-added": cmd_mark_added,
+         "propose": cmd_propose, "respond": cmd_respond, "members": cmd_members, "log": cmd_log,
+         "log-link": cmd_log_link, "pause": cmd_toggle, "resume": cmd_toggle, "leave": cmd_leave,
+         "status": cmd_status}[c](args, st)
 
 
 if __name__ == "__main__":

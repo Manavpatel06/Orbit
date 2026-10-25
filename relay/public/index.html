@@ -26,6 +26,7 @@
   .meta{display:flex;justify-content:space-between;gap:8px;font-size:.75rem;color:var(--muted);margin-bottom:2px}
   .type{font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--c,var(--accent))}
   .txt{overflow-wrap:anywhere}
+  .tag{display:inline-block;margin-left:8px;padding:0 7px;border:1px solid var(--line);border-radius:999px;font-size:.7rem;font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted);white-space:nowrap}
   .msg{text-align:center;color:var(--muted);padding:30px 10px}
   .live{font-size:.75rem;color:var(--muted);text-align:center;margin-top:12px}
 </style>
@@ -47,7 +48,8 @@
   var code = (q.get('c') || '').toUpperCase();
   var k = new URLSearchParams(location.hash.replace(/^#/, '')).get('k') || '';
   var $ = function (id) { return document.getElementById(id); };
-  var COLORS = { joined: 'joined', left: 'left', shared: 'shared', proposed: 'proposed', accepted: 'accepted', declined: 'declined', countered: 'countered', paused: 'paused', resumed: 'resumed' };
+  var COLORS = { joined: 'joined', left: 'left', shared: 'shared', proposed: 'proposed', accepted: 'accepted', declined: 'declined', countered: 'countered', paused: 'paused', resumed: 'resumed', moved: 'proposed' };
+  var TAGS = { agent: '\uD83E\uDD16 agent', student: '\uD83D\uDC64 student' };
 
   function ago(iso) {
     var s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -71,6 +73,7 @@
       li.style.setProperty('--c', 'var(--' + (COLORS[e.type] || 'shared') + ')');
       var meta = document.createElement('div'); meta.className = 'meta';
       var t = document.createElement('span'); t.className = 'type'; t.textContent = e.type;
+      if (TAGS[e.kind]) { var g = document.createElement('span'); g.className = 'tag'; g.textContent = TAGS[e.kind]; t.appendChild(g); }
       var w = document.createElement('span'); w.textContent = ago(e.ts); w.title = new Date(e.ts).toLocaleString();
       meta.appendChild(t); meta.appendChild(w);
       var tx = document.createElement('div'); tx.className = 'txt'; tx.textContent = e.text;

@@ -87,7 +87,10 @@ async function authMember(store, token, code) {
   return member;
 }
 
-const log = (store, code, actor, type, text, actor_id) => store.addLog({ circle_code: code, ts: new Date(), actor, actor_id: actor_id || null, type, text });
+// kind: who produced the entry - the student's Cubbie (agent), the student's own decision, or Orbit itself.
+const DEFAULT_KIND = { joined: 'student', left: 'system', shared: 'agent', proposed: 'agent', accepted: 'student', declined: 'student', countered: 'system', moved: 'agent', paused: 'student', resumed: 'student' };
+const kindOf = (e) => e.kind || DEFAULT_KIND[e.type] || 'system';
+const log = (store, code, actor, type, text, actor_id, kind) => store.addLog({ circle_code: code, ts: new Date(), actor, actor_id: actor_id || null, type, kind: kind || DEFAULT_KIND[type] || 'system', text });
 const todayParam = (v) => (v === undefined || v === null || v === '' ? new Date().toISOString().slice(0, 10) : L.isISODate(v) ? v : (() => { throw new HttpError(400, 'bad_today', 'today must be an ISO date (YYYY-MM-DD).'); })());
 
 async function addMember(store, code, name) {
@@ -120,7 +123,8 @@ function proposalView(p, names, me) {
   return {
     id: p.id, circle_code: p.circle_code, from_id: p.from_id, from_name: names.get(p.from_id) || FORMER,
     to_ids: p.to_ids, to_names: p.to_ids.map((i) => names.get(i) || FORMER),
-    kind: p.kind, course: p.course || null, window: p.window, time: p.time || null, note: p.note || '',
+    kind: p.kind, course: p.course || null, window: p.window, windows: p.windows || [p.window], date: p.date || null, time: p.time || null,
+    round: p.round || 1, note: p.note || '',
     status: p.status, responses: p.responses, parent_id: p.parent_id || null, created_at: iso(p.created_at),
     my_response: me ? p.responses[me] || null : null,
   };
@@ -208,15 +212,18 @@ const H = {
     const members = await ctx.store.listMembers(code);
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     for (const id of input.to) if (!names.has(id)) throw new HttpError(400, 'unknown_member', 'One of the people you picked is not in this circle.');
+    const today = todayParam(ctx.body.today);
+    const now = new Date();
     const p = {
       id: crypto.randomBytes(4).toString('hex'), circle_code: code, from_id: me.member_id, to_ids: input.to, kind: input.kind,
-      window: input.window, note: input.note, status: 'open', responses: {}, parent_id: null, created_at: new Date(),
+      window: input.window, windows: input.windows, date: L.windowDate(input.window, today), time: input.time || L.canonTime(input.window),
+      round: 1, tried: [input.window], note: input.note, status: 'open', responses: {}, parent_id: null, created_at: now,
     };
     if (input.course) p.course = input.course;
-    if (input.time) p.time = input.time;
     await ctx.store.insertProposal(p);
     const who = input.to.map((i) => names.get(i)).join(' and ');
-    await log(ctx.store, code, me.name, 'proposed', `${me.name} proposed a ${input.kind === 'study' ? 'study session' : 'hangout'} to ${who} (${L.prettyWindow(input.window)}).`, me.member_id);
+    const order = input.windows.length > 1 ? `: ${input.windows.map(L.prettyWindow).join(', then ')}` : ` (${L.prettyWindow(input.window)})`;
+    await log(ctx.store, code, me.name, 'proposed', `${me.name}'s Cubbie proposed a ${input.kind === 'study' ? 'study session' : 'hangout'} to ${who}${order}.`, me.member_id, 'agent');
     return [200, proposalView(p, names, me.member_id)];
   },
 
@@ -226,56 +233,128 @@ const H = {
     if (!p || p.circle_code !== me.circle_code) throw new HttpError(404, 'proposal_not_found', 'No such proposal.');
     if (!p.to_ids.includes(me.member_id)) throw new HttpError(404, 'not_recipient', 'That proposal was not addressed to you.');
     const answer = ctx.body.answer;
-    if (answer !== 'yes' && answer !== 'no') throw new HttpError(400, 'bad_answer', 'answer must be yes or no.');
+    if (answer !== 'yes' && answer !== 'no' && answer !== 'busy') throw new HttpError(400, 'bad_answer', 'answer must be yes, no or busy.');
+    const freeWindows = answer === 'busy' && ctx.body.free_windows !== undefined && ctx.body.free_windows !== null ? L.windowList(ctx.body.free_windows, 21, 'free_windows') : null;
     if (p.status !== 'open') throw new HttpError(409, 'proposal_closed', `This proposal is already ${p.status}.`);
     const today = todayParam(ctx.body.today);
     const code = p.circle_code;
     const members = await ctx.store.listMembers(code);
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     const nm = (i) => names.get(i) || FORMER;
-    const responses = { ...p.responses, [me.member_id]: answer };
-    const label = `${p.kind === 'study' ? 'study session' : 'hangout'} (${L.prettyWindow(p.window)})`;
-    let status = 'open';
-    let counter = null;
+    const view = (q, mv = false, counter = null) => [200, { proposal: proposalView(q, names, me.member_id), counter: counter ? proposalView(counter, names, me.member_id) : null, moved: mv }];
+    const closed = async () => {
+      const cur = await ctx.store.getProposal(id);
+      throw new HttpError(409, 'proposal_closed', `This proposal is already ${cur ? cur.status : 'closed'}.`);
+    };
+    const label = (q) => `${q.kind === 'study' ? 'study session' : 'hangout'} (${L.prettyWindow(q.window)})`;
+    const plan = (q) => `${q.kind === 'study' ? (q.course ? `Study ${q.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}`;
 
     if (answer === 'yes') {
-      if (p.to_ids.every((i) => responses[i] === 'yes')) {
-        status = 'accepted';
-        await log(ctx.store, code, me.name, 'accepted', `${me.name} said yes. ${nm(p.from_id)}'s ${label} is on.`, me.member_id);
+      let cur = await ctx.store.setResponse(id, me.member_id, 'yes'); // atomic: concurrent yeses cannot overwrite each other
+      if (!cur) return closed();
+      if (cur.to_ids.every((i) => cur.responses[i] === 'yes')) {
+        const date = cur.date || L.windowDate(cur.window, today);
+        const won = await ctx.store.transitionProposal(id, { status: 'open' }, { status: 'accepted', date, time: cur.time || L.canonTime(cur.window), updated_at: new Date(), change: 'accepted' });
+        if (won) {
+          cur = won;
+          await log(ctx.store, code, me.name, 'accepted', `${me.name} said yes. Plan set: ${plan(cur)}`, me.member_id, 'student');
+        } else cur = (await ctx.store.getProposal(id)) || cur;
       }
-    } else {
-      const live = liveSignals(await ctx.store.listSignals(code), members);
-      const parts = [p.from_id, ...p.to_ids];
-      const sigs = parts.map((i) => live.get(i));
-      let beforeDate;
-      if (p.kind === 'study' && p.course) {
-        const dates = sigs.filter(Boolean).flatMap((s) => (s.courses || []).filter((c) => c.code === p.course).flatMap((c) => c.events.map((e) => e.date))).filter((d) => d >= today).sort();
-        beforeDate = dates[0];
-      }
-      // exclude every window already turned down in this counter chain, so counters cannot ping-pong
-      const declined = [p.window];
-      for (let q = p, i = 0; q && q.parent_id && i < 10; i++) {
-        q = await ctx.store.getProposal(q.parent_id);
-        if (q && q.circle_code === code) declined.push(q.window);
-      }
-      const win = sigs.every(Boolean) ? L.nextBestWindow(sigs, { declined, today, beforeDate }) : null;
-      if (win) {
-        status = 'countered';
-        counter = {
-          id: crypto.randomBytes(4).toString('hex'), circle_code: code, from_id: me.member_id,
-          to_ids: [p.from_id, ...p.to_ids.filter((i) => i !== me.member_id)], kind: p.kind, window: win, note: '',
-          status: 'open', responses: {}, parent_id: p.id, created_at: new Date(),
-        };
-        if (p.course) counter.course = p.course;
-        await ctx.store.insertProposal(counter);
-        await log(ctx.store, code, 'Orbit', 'countered', `${me.name} can't do ${L.prettyWindow(p.window)}. Orbit suggested ${L.prettyWindow(win)} instead.`);
-      } else {
-        status = 'declined';
-        await log(ctx.store, code, me.name, 'declined', `${me.name} can't make ${nm(p.from_id)}'s ${label}, and no other common window was found.`, me.member_id);
+      return view(cur);
+    }
+
+    const live = liveSignals(await ctx.store.listSignals(code), members);
+    const parts = [p.from_id, ...p.to_ids];
+    // exclude every window already turned down in this proposal and its counter chain, so nothing ping-pongs
+    const excluded = new Set([p.window, ...(p.tried || [])]);
+    for (let q = p, i = 0; q && q.parent_id && i < 10; i++) {
+      q = await ctx.store.getProposal(q.parent_id);
+      if (q && q.circle_code === code) {
+        excluded.add(q.window);
+        (q.tried || []).forEach((w) => excluded.add(w));
       }
     }
-    await ctx.store.updateProposal(id, { responses, status });
-    return [200, { proposal: proposalView({ ...p, responses, status }, names, me.member_id), counter: counter ? proposalView(counter, names, me.member_id) : null }];
+    const beforeDateFor = (sigs) => {
+      if (p.kind !== 'study' || !p.course) return undefined;
+      return sigs.filter(Boolean).flatMap((s) => (s.courses || []).filter((c) => c.code === p.course).flatMap((c) => c.events.map((e) => e.date))).filter((d) => d >= today).sort()[0];
+    };
+
+    if (answer === 'busy') {
+      // The responder's Cubbie checked its own student's calendar: the window is not free. Try the next candidate in place.
+      if (freeWindows) {
+        const old = await ctx.store.getSignal(code, me.member_id);
+        const t = new Date();
+        await ctx.store.putSignal(old ? { ...old, free: freeWindows } : { circle_code: code, member_id: me.member_id, free: freeWindows, updated_at: t, expires_at: new Date(t.getTime() + 8 * 86400000) });
+        live.set(me.member_id, { ...(live.get(me.member_id) || {}), free: freeWindows });
+      }
+      const myFree = (live.get(me.member_id) || {}).free || null;
+      const round = p.round || 1;
+      let win = null;
+      if (myFree && round < L.MAX_ROUNDS) {
+        win = (p.windows || []).find((w) => !excluded.has(w) && myFree.includes(w)) || null;
+        if (!win) {
+          const sigs = parts.map((i) => (i === me.member_id ? { free: myFree } : live.get(i)));
+          if (sigs.every(Boolean)) win = L.nextBestWindow(sigs, { declined: [...excluded], today, beforeDate: beforeDateFor(sigs) });
+        }
+      }
+      const checked = `${me.name}'s Cubbie checked their calendar — ${L.prettyWindow(p.window)} is busy.`;
+      if (win) {
+        const set = { window: win, date: L.windowDate(win, today), time: L.canonTime(win), responses: { [p.from_id]: 'yes' }, round: round + 1, tried: [...excluded, win], updated_at: new Date(), change: 'moved' };
+        const moved = await ctx.store.transitionProposal(id, { status: 'open', window: p.window }, set);
+        if (!moved) return view((await ctx.store.getProposal(id)) || p); // someone else moved/closed it first
+        await log(ctx.store, code, me.name, 'moved', `${checked} Moved to ${L.prettyWindow(win)}.`, me.member_id, 'agent');
+        return view(moved, true);
+      }
+      const declined = await ctx.store.transitionProposal(id, { status: 'open', window: p.window }, { status: 'declined', responses: { ...p.responses, [me.member_id]: 'no' }, updated_at: new Date(), change: 'declined' });
+      if (!declined) return view((await ctx.store.getProposal(id)) || p);
+      await log(ctx.store, code, me.name, 'declined', `${checked} No shared time this week.`, me.member_id, 'agent');
+      return view(declined);
+    }
+
+    // answer === 'no': the student declined; Orbit looks for a counter, skipping every window already rejected
+    const responses = { ...p.responses, [me.member_id]: 'no' };
+    const sigs = parts.map((i) => live.get(i));
+    const win = sigs.every(Boolean) ? L.nextBestWindow(sigs, { declined: [...excluded], today, beforeDate: beforeDateFor(sigs) }) : null;
+    const status = win ? 'countered' : 'declined';
+    const upd = await ctx.store.transitionProposal(id, { status: 'open' }, { responses, status, updated_at: new Date(), change: status });
+    if (!upd) return closed();
+    if (!win) {
+      await log(ctx.store, code, me.name, 'declined', `${me.name} can't make ${nm(p.from_id)}'s ${label(p)}, and no other common window was found.`, me.member_id, 'student');
+      return view(upd);
+    }
+    const counter = {
+      id: crypto.randomBytes(4).toString('hex'), circle_code: code, from_id: me.member_id,
+      to_ids: [p.from_id, ...p.to_ids.filter((i) => i !== me.member_id)], kind: p.kind, window: win, windows: [win],
+      date: L.windowDate(win, today), time: L.canonTime(win), round: 1, tried: [...excluded, win], note: '',
+      status: 'open', responses: {}, parent_id: p.id, created_at: new Date(),
+    };
+    if (p.course) counter.course = p.course;
+    await ctx.store.insertProposal(counter);
+    await log(ctx.store, code, 'Orbit', 'countered', `${me.name} can't do ${L.prettyWindow(p.window)}. Orbit suggested ${L.prettyWindow(win)} instead.`, null, 'system');
+    return view(upd, false, counter);
+  },
+
+  async inbox(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    const today = todayParam(ctx.query.get('today'));
+    const sinceRaw = ctx.query.get('since');
+    const since = sinceRaw ? new Date(sinceRaw) : new Date(0);
+    if (Number.isNaN(since.getTime())) throw new HttpError(400, 'bad_since', 'since must be an ISO timestamp.');
+    const [members, signals, proposals] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code)]);
+    const names = new Map(members.map((m) => [m.member_id, m.name]));
+    const cutoff = Date.now() - 7 * 86400000;
+    const recent = proposals.filter((p) => new Date(p.created_at).getTime() >= cutoff);
+    const needs = recent.filter((p) => p.status === 'open' && p.to_ids.includes(me.member_id) && !p.responses[me.member_id])
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((p) => proposalView(p, names, me.member_id));
+    const updates = recent.filter((p) => p.from_id === me.member_id && p.updated_at && new Date(p.updated_at) > since && p.change)
+      .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)).map((p) => ({ ...proposalView(p, names, me.member_id), change: p.change, updated_at: iso(p.updated_at) }));
+    const live = liveSignals(signals, members);
+    const mySig = signals.find((s) => s.member_id === me.member_id && L.isLive(s)) || null;
+    const entries = members.filter((m) => m.member_id !== me.member_id && live.has(m.member_id)).map((m) => ({ member: m, signal: live.get(m.member_id) }));
+    const fresh = new Set(entries.filter((e) => new Date(e.signal.updated_at) > since).map((e) => e.member.member_id));
+    const new_nudges = L.buildSuggestions({ meId: me.member_id, mySig, entries, proposals, today, limit: 1000 })
+      .filter((s) => (s.type === 'check_on' || s.type === 'celebrate') && fresh.has(s.friend_id));
+    return [200, { needs_answer: needs, updates, new_nudges, now: nowIso() }];
   },
 
   async setPaused(ctx, code, paused) {
@@ -320,7 +399,7 @@ const H = {
     return [200, {
       name: circle.name,
       members: members.map((m) => m.name),
-      entries: entries.map((e) => ({ ts: iso(e.ts), actor: e.actor, type: e.type, text: e.text })),
+      entries: entries.map((e) => ({ ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text })),
     }];
   },
 };
@@ -335,6 +414,7 @@ function route(method, parts) {
       if (c === 'join' && method === 'POST') return [H.join, code];
       if (c === 'signal' && method === 'PUT') return [H.putSignal, code];
       if (c === 'feed' && method === 'GET') return [H.feed, code];
+      if (c === 'inbox' && method === 'GET') return [H.inbox, code];
       if (c === 'proposals' && method === 'POST') return [H.propose, code];
       if (c === 'pause' && method === 'POST') return [(x, k) => H.setPaused(x, k, true), code];
       if (c === 'resume' && method === 'POST') return [(x, k) => H.setPaused(x, k, false), code];

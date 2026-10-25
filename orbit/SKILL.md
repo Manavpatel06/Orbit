@@ -50,7 +50,10 @@ If `python3 scripts/orbit.py status` exits with 2, the student is not in a circl
    - "Can I share small wins, like submitting a big project? yes?"
    Save the answers with `python3 scripts/orbit.py consent --busy yes --big-days yes --free yes --courses yes --help no --wins yes`, using the student's real answers.
 6. Connections. If the student said yes to something that needs Google Calendar, Gmail or Canvas and that account is not connected, ask them to connect it (one line, e.g. "Connect Google Calendar in Cubbie so I can see when you're free."). Do not ask them to type the information instead.
-7. Offer scheduled check-ins: "Want me to keep your circle updated and check in twice a day? 8:30 am and 6 pm? yes?" Create them only after the student says yes, at the times they pick. Word each check-in so it makes sense days later: "Orbit check-in: follow the Orbit Skill's Sharing steps to refresh my circle signals from my calendar, Gmail and Canvas, then run python3 scripts/orbit.py feed --today <today> and text me at most two nudges".
+7. Offer scheduled check-ins, one yes/no each:
+   - "Want me to refresh your circle twice a day, 8:30 am and 6 pm? yes?"
+   - "Want a quick check every 30 minutes from 9 am to 11 pm? It only texts you when a friend needs you. yes?"
+   Create each one only after the student says yes, using the wording in Scheduled check-ins.
 8. Right away, do a first share (see Sharing) without asking anything more, then a first feed (see Checking the circle). Say one line, like "Done. Your circle can now see what you agreed to share."
 
 ## Sharing
@@ -79,19 +82,41 @@ Run `python3 scripts/orbit.py feed --today <date>`. It prints suggestions and an
 
 Pick at most 2 nudges, highest value first: a proposal waiting on the student, then a check-on, then a study match (one with a help match first), then celebrate, then hangout. Skip hangout nudges when the student's own busy level is packed. If nothing is useful, say nothing in a scheduled check-in, and say "All quiet in your circle" if the student asked.
 
+In a scheduled check-in, run `feed --new-only` instead. It prints only what has not been shown before, and nothing at all when there is nothing new.
+
 ## Proposing
 
-1. Never propose without the student's yes. Show it first: "Ask Manas to study CSE 576 Thu evening?"
-2. After yes: `python3 scripts/orbit.py propose --to "<name>" --kind study --course "CSE 576" --window thu-evening`. Use `--kind hangout` for non-study plans. Add `--note` only if the student gave one.
-3. Say: "Asked. I will tell you when they answer."
-4. When a plan is accepted by everyone (it shows up in the feed), pick the exact time from the student's own calendar, never from the server. Look at the student's Google Calendar in that window and suggest a start time. Ask "7 pm works. Add it to your calendar? yes?" After yes, add the event to the student's Google Calendar and confirm the exact time. Tell the student they can text the friend the exact time themselves. Remember the plan's id once it is on the calendar, and never add the same plan twice (accepted plans stay in the feed for a week).
+1. Work out the windows yourself, with no question to the student. From the feed's friend free windows and the student's own free windows (Sharing step 1), list the windows both have free. Rank them: before the shared exam or quiz date first, sooner first. Keep up to 3. If the friend already has an open proposal for this course, skip it and say nothing. If no windows overlap, say "No shared time this week yet." and stop.
+2. Never propose without the student's yes. Ask one question with a default: "Ask Manas to study CSE 576? I'll suggest Tue evening, or Thu if that's taken. yes?"
+3. After yes: `python3 scripts/orbit.py propose --to "<name>" --kind study --course "CSE 576" --windows tue-evening,thu-evening --today <date>`. The windows are ranked best first. Use `--kind hangout` for non-study plans, without `--course`. Leave out `--time` (the server picks the time) unless the student gave one. Add `--note` only if the student gave one.
+4. Say: "Asked. I will tell you when they answer." Never text the friend.
 
-## Responding
+## Answering requests
 
-When the feed shows an open proposal for the student, say it in one line: "Manas wants to study CSE 576 Thu evening. Work for you?" Wait for a clear yes or no.
+A line "Needs you: ... (id X)" from `inbox` or `feed` is a request from a friend. Handle it in this order, without asking the student anything you can check yourself.
 
-- Yes: `python3 scripts/orbit.py respond --id <id> --answer yes --today <date>`. If it is now accepted, follow step 4 of Proposing.
-- No: `python3 scripts/orbit.py respond --id <id> --answer no --today <date>`. If a counter window comes back, offer it: "Fri afternoon works for both of you. Suggest it?" Treat a yes as accepting the counter proposal.
+1. Check the student's own Google Calendar for that day and time (the line shows both; the window is the fallback). Read it the way Sharing step 1 does.
+2. Not free: run `python3 scripts/orbit.py respond --id X --answer busy --free <current free windows, comma separated> --today <date>`. Use the free windows from Sharing step 1, or an empty value if there are none. Do not ask the student and do not text anyone. Say nothing to the student unless a new time lands (it then shows up as another "Needs you" line).
+3. Free: ask once, yes or no, with the day, time and course from the line: "Manav wants to study CSE 576 Thu 7 PM. You're free then. Lock it in? yes?"
+   - Yes: `python3 scripts/orbit.py respond --id X --answer yes --today <date>`. If the reply starts with "Locked in:", handle it under Plans and updates. Otherwise say nothing more.
+   - No: `python3 scripts/orbit.py respond --id X --answer no --today <date>`. If the reply includes a counter, say one line: "Passed. Suggested Fri afternoon to Manas instead." Ask nothing else.
+
+## Plans and updates
+
+Lines from `inbox` and `feed` that start with "Locked in:" or "Update:" are plan news. Handle them like this.
+
+- "Locked in: ... (id X)": add the plan to the student's Google Calendar once, using the date and time on the line, then run `python3 scripts/orbit.py mark-added --id X`. Text one line, such as "Locked in: Study CSE 576 with Manas, Thu 7 PM." Leave out the friend's name if the line does not give it. After a yes that returned "Locked in:", use the id you answered.
+- If the line says "(id X, already on your calendar)", do not add it again and do not text it again.
+- "Update: ... moved your plan ..." or "Countered: ...": if the student proposed the plan and nothing is needed from them, text one line such as "Manas's Cubbie moved your study time to Thu evening. Nothing needed from you." Otherwise say nothing. A new time that needs an answer arrives as a "Needs you" line.
+- "No shared time for ... this week.": if the student proposed the plan, text one line saying so.
+- Nudge lines (check-on, celebrate) follow Check-on and celebrate nudges below.
+
+## Scheduled check-ins
+
+Each check-in runs later on its own, so it names this Skill and what to run.
+
+- Two daily refreshes (if the student said yes in First time): "Orbit check-in: follow the Orbit Skill's Sharing steps to refresh my circle signals from my calendar, Gmail and Canvas, then from the Orbit Skill folder run python3 scripts/orbit.py feed --new-only --today <today>. Text me at most two nudges, only what it prints. If it prints nothing, stay silent."
+- Quick check (if the student said yes): "Orbit quick check, every 30 minutes from 9 am to 11 pm: from the Orbit Skill folder run python3 scripts/orbit.py inbox --today <today>. If it prints nothing, stay silent. For each line, follow the Orbit Skill's Answering requests and Plans and updates sections. Text me only for a line that needs my yes or no, a Locked in line, or an update that needs nothing from me."
 
 ## Check-on and celebrate nudges
 
@@ -128,11 +153,11 @@ When a command fails, it prints one line on stderr and exits with a code. Reply 
 | 6 | Say what the script's message says needs fixing, in plain words, and ask for it. |
 | 7 | "Orbit hit a problem on its end. Try again in a few minutes." |
 
-On exit 4 or 7, retry once, then give the line. Never retry silently more than once.
+On exit 4 or 7, retry once, then give the line. Never retry silently more than once. In a scheduled check-in, a failure with exit 4 or 7 is not texted: try again at the next check.
 
 ## Not connected cases
 
-- Google Calendar not connected: ask once, "Connect Google Calendar in Cubbie so I can share when you're free." Until then share without free windows. Do not ask the student to list free times.
+- Google Calendar not connected: ask once, "Connect Google Calendar in Cubbie so I can share when you're free." Until then share without free windows. Do not ask the student to list free times. Answering requests needs the calendar: when it is not connected, ask the student once, yes or no, "Is the time on that line free for you? yes?"
 - Gmail not connected: skip step 3 of Sharing; Canvas and the calendar are enough.
 - Canvas not connected: share without courses and say once "Connect Canvas to unlock study matches." Do not make up or ask for course codes.
 - Nothing matches: say "No matches yet. Want to invite more friends with your code?"

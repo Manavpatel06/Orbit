@@ -57,6 +57,10 @@ export function createMongoStore(db) {
     async updateProposal(id, set) {
       await c.proposals.updateOne({ id }, { $set: set });
     },
+    /** Atomic: records one member's answer on a still-open proposal. Returns the updated proposal or null. */
+    setResponse: (id, memberId, answer) => c.proposals.findOneAndUpdate({ id, status: 'open' }, { $set: { [`responses.${memberId}`]: answer } }, { returnDocument: 'after', projection: { _id: 0 } }),
+    /** Atomic compare-and-set: applies `set` only if the proposal matches `match` (e.g. {status:'open'}). Returns the updated proposal or null. */
+    transitionProposal: (id, match, set) => c.proposals.findOneAndUpdate({ ...match, id }, { $set: set }, { returnDocument: 'after', projection: { _id: 0 } }),
     async deleteProposals(ids) {
       if (ids.length) await c.proposals.deleteMany({ id: { $in: ids } });
     },

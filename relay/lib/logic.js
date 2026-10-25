@@ -41,6 +41,22 @@ export function windowKey(token, today) {
 export function prettyWindow(token) {
   return token.replace('-', ' ');
 }
+export const CANON_TIME = { morning: '10:00', afternoon: '14:00', evening: '19:00' };
+export const MAX_ROUNDS = 4;
+export function canonTime(token) {
+  return CANON_TIME[token.split('-')[1]];
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+/** "Thu Oct 30" */
+export function prettyDate(iso) {
+  return `${DAY_NAMES[dow(iso)]} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number(iso.slice(8, 10))}`;
+}
+/** "19:00" -> "7:00 PM" */
+export function prettyTime(hhmm) {
+  const h = Number(hhmm.slice(0, 2));
+  return `${h % 12 || 12}:${hhmm.slice(3, 5)} ${h < 12 ? 'AM' : 'PM'}`;
+}
 
 // ---------- strings ----------
 function cleanStr(v, max, field, { required = false } = {}) {
@@ -143,6 +159,12 @@ export function isLive(sig, now = new Date()) {
 }
 
 // ---------- proposal input ----------
+/** Validated, de-duplicated list of window tokens (order kept). */
+export function windowList(v, max, field) {
+  const list = arr(v, max, field);
+  for (const w of list) if (typeof w !== 'string' || !WINDOW_RE.test(w)) throw new InputError(`${field} must look like "thu-evening" (got ${JSON.stringify(String(w)).slice(0, 30)}).`);
+  return [...new Set(list)];
+}
 export function sanitizeProposalInput(body, selfId) {
   if (!isObj(body)) throw new InputError('Body must be a JSON object.');
   const to = arr(body.to, 11, 'to');
@@ -151,8 +173,15 @@ export function sanitizeProposalInput(body, selfId) {
   const ids = [...new Set(to)];
   if (ids.includes(selfId)) throw new InputError('You cannot propose to yourself.');
   if (body.kind !== 'study' && body.kind !== 'hangout') throw new InputError('kind must be study or hangout.');
-  if (typeof body.window !== 'string' || !WINDOW_RE.test(body.window)) throw new InputError('window must look like "thu-evening".');
-  const p = { to: ids, kind: body.kind, window: body.window };
+  let windows;
+  if (body.windows !== undefined && body.windows !== null) {
+    windows = windowList(body.windows, 5, 'windows');
+    if (!windows.length) throw new InputError('windows must list at least one window.');
+  } else {
+    if (typeof body.window !== 'string' || !WINDOW_RE.test(body.window)) throw new InputError('window must look like "thu-evening".');
+    windows = [body.window];
+  }
+  const p = { to: ids, kind: body.kind, window: windows[0], windows };
   if (body.course !== undefined && body.course !== null && body.course !== '') p.course = needCourse(body.course, 'course');
   if (body.time !== undefined && body.time !== null && body.time !== '') {
     if (typeof body.time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(body.time)) throw new InputError('time must be HH:MM (24h).');
@@ -214,7 +243,7 @@ export function friendView(mySig, friend, sig) {
  * entries: [{member, signal}] for visible friends (unpaused, live signal).
  * proposals: all circle proposals (any status). Returns max 5, priority ordered.
  */
-export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, today }) {
+export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, today, limit = 5 }) {
   const mySig = mySigIn || {};
   const tomorrow = addDays(today, 1);
   const horizon = addDays(today, 7);
@@ -222,6 +251,11 @@ export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, tod
   const helpCovered = new Set();
   const cutoff = addDays(today, -7);
   const myCourses = new Map(((mySig && mySig.courses) || []).map((c) => [c.code, c]));
+  // no repeats: skip (friend, kind, course) pairs that already have an open/accepted proposal from the last 7 days
+  const iso10 = (d) => String(d instanceof Date ? d.toISOString() : d).slice(0, 10);
+  const planned = (friendId, kind, course) => proposals.some((p) => ['open', 'accepted'].includes(p.status) && iso10(p.created_at) >= cutoff
+    && p.kind === kind && (kind === 'hangout' || (p.course || null) === course)
+    && [p.from_id, ...p.to_ids].includes(meId) && [p.from_id, ...p.to_ids].includes(friendId));
 
   for (const { member, signal } of entries) {
     const f = member.name;
@@ -243,7 +277,7 @@ export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, tod
         .filter((e) => { const k = `${e.kind}|${e.date}|${e.title}`; if (seen.has(k)) return false; seen.add(k); return true; })
         .sort((a, b) => a.date.localeCompare(b.date));
       const helpTopic = (signal.can_help || []).find((h) => h.course === sc.code && (mySig.want_help || []).some((w) => w.course === sc.code && topicMatch(w.topic, h.topic)));
-      if (events.length && common.length) {
+      if (events.length && common.length && !planned(member.member_id, 'study', sc.code)) {
         const ev = events[0];
         const window = common.find((w) => windowDate(w, today) < ev.date) || common[0];
         const item = { type: 'study_match', ...base, course: sc.code, event: { kind: ev.kind, title: ev.title, date: ev.date }, window };
@@ -257,13 +291,14 @@ export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, tod
         out.study_match.push(item);
       }
       // 3. help_match
-      for (const h of (signal.can_help || []).filter((x) => x.course === sc.code)) {
+      const helpPlanned = planned(member.member_id, 'study', sc.code);
+      for (const h of helpPlanned ? [] : (signal.can_help || []).filter((x) => x.course === sc.code)) {
         if (helpCovered.has(`${member.member_id}|${sc.code}|${h.topic}`)) continue;
         if ((mySig.want_help || []).some((w) => w.course === sc.code && topicMatch(w.topic, h.topic))) {
           out.help_match.push({ type: 'help_match', ...base, course: sc.code, help_topic: h.topic, text: `${f} can help with ${h.topic} in ${sc.code}.` });
         }
       }
-      for (const w of (signal.want_help || []).filter((x) => x.course === sc.code)) {
+      for (const w of helpPlanned ? [] : (signal.want_help || []).filter((x) => x.course === sc.code)) {
         if ((mySig.can_help || []).some((h) => h.course === sc.code && topicMatch(h.topic, w.topic))) {
           out.help_match.push({ type: 'help_match', ...base, course: sc.code, help_topic: w.topic, text: `${f} wants help with ${w.topic} in ${sc.code}, and you can help.` });
         }
@@ -277,7 +312,7 @@ export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, tod
     }
 
     // 5. hangout
-    if (common.length && (!mySig || mySig.busy !== 'packed')) {
+    if (common.length && (!mySig || mySig.busy !== 'packed') && !planned(member.member_id, 'hangout', null)) {
       const talked = proposals.some((p) => String(p.created_at instanceof Date ? p.created_at.toISOString() : p.created_at).slice(0, 10) >= cutoff
         && [p.from_id, ...p.to_ids].includes(meId) && [p.from_id, ...p.to_ids].includes(member.member_id));
       if (!talked) out.hangout.push({ type: 'hangout', ...base, window: common[0], text: `You and ${f} are both free ${prettyWindow(common[0])}.` });
@@ -285,7 +320,7 @@ export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, tod
   }
 
   out.study_match.sort((a, b) => (b.help_topic ? 1 : 0) - (a.help_topic ? 1 : 0) || a.event.date.localeCompare(b.event.date));
-  return [...out.check_on, ...out.study_match, ...out.help_match, ...out.celebrate, ...out.hangout].slice(0, 5);
+  return [...out.check_on, ...out.study_match, ...out.help_match, ...out.celebrate, ...out.hangout].slice(0, limit);
 }
 
 // ---------- log scrubbing ----------

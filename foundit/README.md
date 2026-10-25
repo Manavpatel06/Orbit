@@ -1,43 +1,49 @@
 # FoundIt
 
-Your notes are in your camera roll somewhere. FoundIt finds them.
+Describe a photo however you remember it. Cubbie finds every match in your gallery.
 
-FoundIt is a Cubbie Skill. With the student's yes, Cubbie looks through their photo gallery, keeps a private index of only the photos that are study material (lecture notes, whiteboards, slides, handouts, circuits, diagrams), and finds the right one when the student describes it in their own words.
+FoundIt is a Cubbie Skill. You text what you remember, vague or exact, with or without a date:
 
-"I took a picture last Wednesday of a motor circuit" -> the H-bridge photo from Oct 14.
+- "a purple flower pic with a man behind it"
+- "I took a picture last Wednesday of a motor circuit"
+- "the whiteboard about pipelining hazards"
 
-## What it does
+Cubbie searches your gallery and sends back every photo that matches.
 
-1. Asks first. One yes/no question before Cubbie looks at any photo. No means it never looks.
-2. Reads the gallery. Cubbie looks at new photos in small batches, skips everything that is not study material (kept only as an unreadable key, so it is not looked at twice), and saves the rest with what is written on them, the kind, the course, topic tags and a one-line summary.
-3. Understands the ask. Day words (yesterday, last Wednesday, last week), the kind of photo (circuit, whiteboard, slides), course codes and topic words all count. If the student misremembers the day, it falls back to the closest match from other days and says so.
-4. Shows it the right way.
-   - Notes, boards, slides: sends the photo. If it cannot send the photo, it tells the student what was written on it.
-   - Circuits, schematics, diagrams, graphs: always shows the photo, because words do not replace a circuit. Without image sending, it gives the photo link and a one-line summary.
-5. Forgets on request. One note, all notes, or gallery access off (deletes everything).
+## How it works
+
+1. Asks first. One yes/no before Cubbie looks at any photo, then which service your photos are in (Google Photos or iCloud Photos). That answer is the only thing remembered.
+2. Plans the search. `scripts/foundit.py` turns your words into search words, the kind of photo, the course and, if you gave one, the exact date range ("last Wednesday" becomes Wed Oct 21). Language models often get relative dates wrong, so this step is a script.
+3. Searches and looks. Cubbie searches the gallery in its browser (Google Photos search finds things, colors and text in photos), then looks at the results and keeps every photo that fits the whole description, including what a search box can't take, like "a man behind it".
+4. Sends them back. All matches, newest first, 10 at a time. Circuits and diagrams always come back as the photo itself. For notes and whiteboards, if a photo can't be sent, Cubbie texts what's written on it.
+
+If nothing matches, Cubbie widens the dates, drops search words, then asks for one more detail.
 
 ## Privacy
 
-- Nothing leaves the student's side. The index lives in `~/.config/foundit/index.json` (mode 600) and is never sent to any server.
-- Only study photos are saved. Nothing about people or faces is ever saved or described.
+- Nothing is stored. No photos, no copies, no index, nothing about what is on them. A photo is downloaded only to a temporary file to attach it, and deleted right after.
+- The script is stateless: no files, no network, standard library only.
+- People are matched only by what you described. Cubbie never tries to work out who someone is.
+- Nothing changes in your library: no albums, edits or share links without your yes.
 
 ## Install
 
-Text Cubbie the link to the `foundit/` folder of this repo and reply yes when it asks to install it.
+Text Cubbie the link to this folder: https://github.com/Manavpatel06/Orbit/tree/reya/foundit
 
-## Repo layout
+## Files
 
 ```
 foundit/
-  SKILL.md            what Cubbie follows
-  scripts/foundit.py  stdlib-only client (Python 3.8+)
-  README.md
-tests/foundit/run.sh  client checks, no network
+  SKILL.md                    what Cubbie follows
+  scripts/foundit.py          the search planner (Python 3.8+, standard library)
+  assets/sample_request.json  example for plan --sample
+tests/foundit/test_foundit.py
 ```
 
-## Run the tests
+## Try it and test it
 
 ```bash
-bash tests/foundit/run.sh                 # uses python3
-PYTHON=python bash tests/foundit/run.sh   # or pick the interpreter
+python3 foundit/scripts/foundit.py plan --said "a purple flower pic with a man behind it" --today 2026-10-25
+python3 foundit/scripts/foundit.py plan --sample --json
+python3 -m unittest discover -s tests/foundit
 ```

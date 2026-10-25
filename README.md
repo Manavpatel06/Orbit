@@ -2,19 +2,19 @@
 
 Your Cubbie and your friends' Cubbies look out for each other.
 
-Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a private circle, each Cubbie shares a few coarse signals the student agrees to, and the Cubbies help you show up for each other on busy weeks. Built for Track 1 of the Cubbie Hackathon.
+Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a private circle, each Cubbie shares a few coarse signals the student agrees to, and the Cubbies help you show up for each other on busy weeks. Built for the Cubbie Hackathon (Track 1: Cubbie Skills, Track 2: Agent-to-Agent Coordination).
 
 ## What it does
 
 1. Study match. Shared course plus overlapping free time.
-   "CSE 576 exam Friday and Manas is free Thu evening. Study together?"
-2. Plans both sides agree on. One Cubbie proposes, the other asks its student, both say yes, and each Cubbie adds it to its own student's Google Calendar.
-   "Manas said yes. 7 pm Thu, added to your calendar."
-3. Conflicts. If someone says no, Orbit suggests the next best common window.
-   "Mansi can't do Thu. Fri afternoon works for both. Suggest it?"
-4. Check-on nudges. A friend posted a big day, so Cubbie drafts a short text for you to send yourself.
-   "Reya has a big day tomorrow. Draft: 'Big day tomorrow, you got this.'"
-5. Circle log. A page showing every proposal, yes and no in the circle.
+   "You and Manas both have CSE 576, quiz Friday. Study Tue evening, or Thu if that's taken?"
+2. Agents negotiate the time. Your Cubbie proposes ranked times. Your friend's Cubbie checks its own student's calendar first and, if the time is busy, moves the plan to the next time that works for both, without bothering anyone.
+3. One question, at the right moment. Each student is asked once, only for a time their calendar already shows free.
+   "Manav wants to study CSE 576 Thu 7 PM. You're free then. Lock it in? yes?"
+4. Locked in, once. Both Cubbies get the same date and time and add it to their student's Google Calendar exactly once.
+5. Check-on nudges. A friend posted a big day, so Cubbie offers a short text for you to send yourself.
+   "Reya has a big day tomorrow. Want a short text to send her?"
+6. Circle log. A live page showing every agent step and every student decision.
 
 ## Install
 
@@ -28,20 +28,56 @@ Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a priva
 - Every field is opt-in, one question at a time.
 - Busy level (light, busy, packed) is estimated from deadlines and calendar. It is never a stress or mood label.
 - Nudges repeat only what a friend posted. Orbit never guesses feelings.
-- Free time is shared only as coarse windows like thu-evening. The exact time is picked privately from each student's own calendar after both agree.
+- Free time is shared only as coarse windows like thu-evening. Each agent checks the exact time against its own student's calendar privately.
 - Friends see only the courses you both take.
 - No grades, assignment content or messages are ever shared.
 - Cubbie never texts your friends. You send the texts.
 - Pause stops sharing. Leaving deletes your data from the server.
 
+## How the agents coordinate (Track 2)
+
+Each student's Cubbie is that student's agent. The agents never message each other's students; they talk through the circle relay and only ever ask their own student.
+
+What each agent shares (only with consent, refreshed automatically from Calendar, Canvas and Gmail):
+- busy level (light / busy / packed) and big-day dates, never the reason
+- coarse free windows like thu-evening, never event names or exact times
+- course codes with exam and deadline dates, visible only to friends in the same course
+- optional help topics and small wins
+
+How a plan gets made:
+
+```
+Manav's Cubbie                     Orbit relay                      Manas's Cubbie
+  finds shared course + common  ->  proposal: [tue-evening,      ->  inbox (quick check)
+  windows, ranks them, asks Manav    thu-evening], time 7:00 PM      checks Manas's calendar
+  once: "Ask Manas? yes"                                              tue busy -> answer "busy"
+                                   moves SAME proposal to         <-  + current free windows
+                                   thu-evening (round 2), logs it
+                                                                  ->  Manas is free Thu 7 PM
+                                                                      asks Manas once: "Lock it in?"
+  "Locked in: Thu Oct 29, 7 PM" <- accepted: date + time fixed    <-  "yes"
+  adds to calendar once                                               adds to calendar once
+```
+
+Conflicting constraints:
+- Ranked windows: the proposer sends up to 5 times, best first (before the shared exam, sooner first).
+- Agent-level "busy": a receiving agent that sees a calendar conflict answers for its student and passes its current free windows; the relay moves the proposal to the next time free for everyone, skipping every time already turned down. Up to 4 rounds, then "no shared time this week".
+- Student "no": creates a counter proposal at the next common window.
+- Group plans: every invitee must say yes; responses are recorded atomically.
+- One canonical time per plan (morning 10:00, afternoon 2:00 PM, evening 7:00 PM unless the proposer's calendar picks another), so both calendars match.
+
+When students are asked to confirm: before a proposal is sent, before accepting a time (only when their own calendar is free), and before anything is added to their calendar. Cubbie never texts friends; students send their own texts.
+
+No noise: a quick check every 30 minutes (optional) stays silent unless something needs the student, the same nudge is never repeated, and suggestions stop once a plan exists.
+
 ## How it works
 
-A Skill Cubbie follows, plus a tiny relay that stores the shared signals.
+A Skill Cubbie follows, plus a small relay that stores shared signals and runs the negotiation.
 
 ```
 Your Cubbie  --Skill + orbit.py-->  Relay (Vercel + MongoDB)  <--  Friend's Cubbie
      |                                       |                          |
- Canvas + Calendar                    circle log page            Canvas + Calendar
+ Canvas + Calendar + Gmail            circle log page          Canvas + Calendar + Gmail
      |                                                                  |
  you send the texts                                           friend sends the texts
 ```

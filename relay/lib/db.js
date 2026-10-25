@@ -96,8 +96,13 @@ async function ensureIndexes(db) {
 export async function getStore() {
   if (!globalThis.__orbitStore) {
     globalThis.__orbitStore = (async () => {
-      const uri = process.env.MONGODB_URI;
+      // Tolerate stray whitespace, quotes or backticks pasted into the dashboard.
+      const raw = process.env.MONGODB_URI || '';
+      const uri = raw.trim().replace(/^[`'"]+|[`'"]+$/g, '').replace(/^MONGODB_URI\s*=\s*/, '').trim();
       if (!uri) throw new Error('MONGODB_URI is not set');
+      if (!/^mongodb(\+srv)?:\/\//.test(uri)) {
+        throw new Error(`MONGODB_URI has an invalid scheme (starts with "${uri.slice(0, 8).replace(/[^a-z+:/]/gi, '?')}", length ${uri.length})`);
+      }
       const { MongoClient } = await import('mongodb');
       const client = new MongoClient(uri, { maxPoolSize: 5, serverSelectionTimeoutMS: 8000 });
       await client.connect();

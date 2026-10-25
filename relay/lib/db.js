@@ -98,8 +98,14 @@ export async function getStore() {
     globalThis.__orbitStore = (async () => {
       // Tolerate stray whitespace, quotes or backticks pasted into the dashboard.
       const raw = process.env.MONGODB_URI || '';
-      const uri = raw.trim().replace(/^[`'"]+|[`'"]+$/g, '').replace(/^MONGODB_URI\s*=\s*/, '').trim();
+      let uri = raw.trim().replace(/^[`'"]+|[`'"]+$/g, '').replace(/^MONGODB_URI\s*=\s*/, '').trim();
       if (!uri) throw new Error('MONGODB_URI is not set');
+      // If only the database password was provided, build the URI from MONGODB_USER / MONGODB_HOST.
+      if (!uri.includes('://')) {
+        const user = process.env.MONGODB_USER || 'orbit-relay';
+        const host = process.env.MONGODB_HOST || 'orbit.lnykdve.mongodb.net';
+        uri = `mongodb+srv://${encodeURIComponent(user)}:${encodeURIComponent(uri)}@${host}/?retryWrites=true&w=majority&appName=orbit`;
+      }
       if (!/^mongodb(\+srv)?:\/\//.test(uri)) {
         throw new Error(`MONGODB_URI has an invalid scheme (starts with "${uri.slice(0, 8).replace(/[^a-z+:/]/gi, '?')}", length ${uri.length})`);
       }

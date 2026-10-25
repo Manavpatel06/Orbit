@@ -30,6 +30,8 @@ DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PARTS = ["morning", "afternoon", "evening"]
 CONSENT_KEYS = ["busy", "big_days", "free", "courses", "help", "wins"]
 MAX_WINDOWS = 5        # windows per proposal, ranked best first
+MAX_PLACES = 3         # places per proposal
+MAX_PLACE_LEN = 40
 MAX_SHOWN = 5          # suggestions printed per feed
 MAX_WAITING = 3        # proposals waiting on the student printed per feed
 MAX_ACCEPTED = 2       # accepted plans printed per feed
@@ -222,6 +224,38 @@ def ask_text(p: dict) -> str:
     return "make a plan"
 
 
+def place_text(p: dict) -> str:
+    """' · Hayden Library' for the set place, or ' · A or B' for the options still open. Empty when none."""
+    place = p.get("place") or " or ".join(p.get("places") or [])
+    return f" · {place}" if place else ""
+
+
+def remind_text(p: dict) -> str:
+    """' · remind 6:00 PM' (with the date when it is not the plan's day)."""
+    ra = p.get("remind_at")
+    if not ra or "T" not in str(ra):
+        return ""
+    day, _, clock = str(ra).partition("T")
+    t = fmt_time(clock[:5])
+    if not t:
+        return ""
+    return f" · remind {t}" if day == p.get("date") else f" · remind {fmt_date(day)} {t}"
+
+
+def reason_text(p: dict) -> str:
+    """' (before your quiz Fri)': the top reason the relay gave for this time. Empty when there is none."""
+    reasons = [r for r in (p.get("reasons") or []) if isinstance(r, str) and r]
+    if not reasons:
+        return ""
+    r = reasons[0]
+    if p.get("change") == "rescheduled":
+        r = "rescheduled: " + next((x for x in reasons if "no longer free" in x), r)
+    course = p.get("course")
+    if course and r.startswith(f"before {course} "):
+        r = "before your " + r[len(f"before {course} "):]
+    return f" ({r})"
+
+
 def csv(s: str | None) -> list[str]:
     return [x.strip() for x in (s or "").split(",") if x.strip()]
 
@@ -301,7 +335,16 @@ def locked_key(p: dict) -> str:
 def id_tag(st: dict, pid) -> str:
     if pid and pid in (st.get("calendar_added") or {}):
         return f"(id {pid}, already on your calendar)"
+    if pid and pid in (st.get("calendar_stale") or {}):
+        return f"(id {pid}, move the old calendar entry)"
     return f"(id {pid})"
+
+
+def stale_calendar(st: dict, pid) -> None:
+    """A plan that was on the calendar got a new time: forget it was added, and remember the old entry needs moving."""
+    added = st.get("calendar_added") or {}
+    if pid and pid in added:
+        st.setdefault("calendar_stale", {})[pid] = added.pop(pid)
 
 
 # ---------- sample mode ----------
@@ -344,9 +387,9 @@ def select_feed(st: dict, feed: dict, now: datetime, new_only: bool):
 
 def render_feed(st: dict, name: str, count: int, sugg, waiting, accepted, quiet: bool) -> None:
     lines = [f"- {s.get('text', '')}" for s in sugg]
-    lines += [f"Waiting on you: {p.get('from_name', 'Someone')} wants to {ask_text(p)} · {when_text(p)} {id_tag(st, p.get('id'))}"
+    lines += [f"Waiting on you: {p.get('from_name', 'Someone')} wants to {ask_text(p)} · {when_text(p)}{place_text(p)}{reason_text(p)} {id_tag(st, p.get('id'))}"
               for p in waiting]
-    lines += [f"Locked in: {what_text(p)} · {when_text(p)} {id_tag(st, p.get('id'))}" for p in accepted]
+    lines += [f"Locked in: {what_text(p)} · {when_text(p)}{place_text(p)}{remind_text(p)} {id_tag(st, p.get('id'))}" for p in accepted]
     if not lines:
         if not quiet:
             print("Nothing new from your circle right now.")
@@ -360,14 +403,15 @@ def update_line(st: dict, u: dict) -> str:
     pid = u.get("id")
     status = u.get("status")
     if status == "accepted":
-        return f"Locked in: {what_text(u)} · {when_text(u)} {id_tag(st, pid)}"
+        return f"Locked in: {what_text(u)} · {when_text(u)}{place_text(u)}{remind_text(u)} {id_tag(st, pid)}"
     if status == "declined":
         return f"No shared time for {what_text(u)} this week."
     if status == "countered":
         return f"Countered: {what_text(u)} ({when_text(u)}) needs a new time."
     if status == "open":  # still open but moved to another window
         mover = u.get("moved_by_name") or "Your friend"
-        return f"Update: {mover}'s Cubbie moved your plan to {when_text(u)}."
+        verb = "rescheduled" if u.get("change") == "rescheduled" else "moved"
+        return f"Update: {mover}'s Cubbie {verb} your plan to {when_text(u)}{place_text(u)}."
     return f"Update: {what_text(u)} · {when_text(u)} is {status or 'updated'}."
 
 
@@ -383,7 +427,12 @@ def inbox_lines(st: dict, res: dict, now: datetime) -> list[str]:
         if key in seen:
             continue
         seen[key] = ts_str(now)
-        lines.append(f"Needs you: {p.get('from_name', 'Someone')} wants to {ask_text(p)} · {when_text(p)} {id_tag(st, p.get('id'))}")
+        if p.get("change") == "rescheduled":
+            stale_calendar(st, p.get("id"))
+        lines.append(f"Needs you: {p.get('from_name', 'Someone')} wants to {ask_text(p)} · {when_text(p)}{place_text(p)}{reason_text(p)} {id_tag(st, p.get('id'))}")
+    for u in updates:
+        if u.get("change") == "rescheduled":
+            stale_calendar(st, u.get("id"))
     lines += [update_line(st, u) for u in updates]
     lines += [n["text"] for n in res.get("new_nudges") or [] if n.get("text")]
     st["seen"] = prune_seen(seen, now)
@@ -404,7 +453,7 @@ def respond_lines(ans: str, prop: dict, res: dict, prev: str | None) -> list[str
         return [f"{said}."]
     if ans == "yes":
         if status == "accepted":
-            return [f"Locked in: {what_text(prop)} · {when_text(prop)}"]
+            return [f"Locked in: {what_text(prop)} · {when_text(prop)}{place_text(prop)}{remind_text(prop)}"]
         return [f"Said yes to {what_text(prop)} · {when_text(prop)}. Waiting on the others."]
     lines = [f"You said no to {what_text(prop)} · {when_text(prop)}."]
     if counter:
@@ -561,6 +610,18 @@ def cmd_share(args, st: dict) -> None:
     if args.free:
         wins = [check_window(t) for t in csv(args.free)]
         wanted["free"] = ("free", wins)
+    if args.prefers:
+        parts = [t.strip().lower() for t in csv(args.prefers)]
+        for t in parts:
+            if t not in PARTS:
+                fail(f"bad --prefers '{t}': use morning, afternoon or evening.", 6)
+        wanted["prefers"] = ("free", list(dict.fromkeys(parts)))
+    if args.avoid_days:
+        days_off = [t.strip().lower() for t in csv(args.avoid_days)]
+        for t in days_off:
+            if t not in DAYS:
+                fail(f"bad --avoid-days '{t}': use mon..sun, e.g. fri,sat.", 6)
+        wanted["avoid_days"] = ("free", list(dict.fromkeys(days_off)))
     raw_courses = None
     if args.courses_file:
         try:
@@ -593,7 +654,7 @@ def cmd_share(args, st: dict) -> None:
         wanted["wins"] = ("wins", [w.strip() for w in args.win if w.strip()])
     if not wanted:
         fail("nothing to share: pass at least one of --busy, --big-days, --free, --courses-file, "
-             "--can-help, --want-help, --win.", 6)
+             "--prefers, --avoid-days, --can-help, --want-help, --win.", 6)
 
     signal = {"week_of": week_of}
     shared, withheld = [], []
@@ -656,11 +717,30 @@ def cmd_mark_added(args, st: dict) -> None:
     added = prune_added(st.get("calendar_added") or {}, now)
     added[pid] = ts_str(now)
     st["calendar_added"] = added
+    (st.get("calendar_stale") or {}).pop(pid, None)
     save_state(st)
     if args.json:
         emit({"id": pid, "marked": True})
     else:
         print(f"Marked {pid} as on your calendar. It will not be added again.")
+
+
+def parse_places(raw: str | None) -> list[str]:
+    """--places "Hayden Library 2nd floor|Zoom": up to 3 places, 40 characters each."""
+    if raw is None:
+        return []
+    out = []
+    for item in raw.split("|"):
+        item = " ".join(item.split())
+        if not item:
+            continue
+        if len(item) > MAX_PLACE_LEN:
+            fail(f"place '{item[:20]}...' is too long (max {MAX_PLACE_LEN} characters).", 6)
+        if item not in out:
+            out.append(item)
+    if len(out) > MAX_PLACES:
+        fail(f"at most {MAX_PLACES} places per proposal.", 6)
+    return out
 
 
 def resolve_targets(members: list, me_id: str, targets: list[str]) -> list[str]:
@@ -701,10 +781,13 @@ def cmd_propose(args, st: dict) -> None:
             assert 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59 and len(mm) == 2
         except (ValueError, AssertionError):
             fail(f"bad --time '{args.time}': use HH:MM, e.g. 19:00.", 6)
+    places = parse_places(args.places)
     today = parse_today(args.today)
     members = get_members(st, code, circ).get("members", [])
     to = resolve_targets(members, circ["member_id"], args.to)
     body = {"to": to, "kind": args.kind, "windows": windows, "today": today.isoformat()}
+    if places:
+        body["places"] = places
     if args.course:
         body["course"] = args.course.strip()
     if args.time:
@@ -721,6 +804,11 @@ def cmd_propose(args, st: dict) -> None:
     msg = f"Proposed {what_text(p)} to {who}: {when_text(p)} (id {p.get('id')})."
     if len(windows) > 1:
         msg += f" Backups: {', '.join(pretty_window(w) for w in windows[1:])}."
+    if places:
+        msg += f" Places: {' or '.join(places)}."
+    why = reason_text(p).strip()
+    if why:
+        msg += f" Why: {why[1:-1]}."
     print(msg)
 
 
@@ -736,6 +824,20 @@ def cmd_respond(args, st: dict) -> None:
         body["free_windows"] = [check_window(t) for t in csv(args.free)]
     elif args.free is not None:
         fail("--free only goes with --answer busy.", 6)
+    if args.place is not None or args.place_suggest is not None:
+        if ans != "yes":
+            fail("--place and --place-suggest only go with --answer yes.", 6)
+        if args.place is not None and args.place_suggest is not None:
+            fail("use either --place <number> or --place-suggest \"<text>\", not both.", 6)
+        if args.place is not None:
+            if args.place < 0:
+                fail("--place is the number of a proposed place, starting at 0.", 6)
+            body["place_choice"] = args.place
+        else:
+            text = " ".join(args.place_suggest.split())
+            if not text or len(text) > MAX_PLACE_LEN:
+                fail(f"--place-suggest needs 1 to {MAX_PLACE_LEN} characters.", 6)
+            body["place_suggest"] = text
     prev = (st.get("proposal_windows") or {}).get(args.id)
     res = http("POST", server_url(st), f"/proposals/{args.id}/respond", body, token=circ["token"])
     prop = res.get("proposal") or {}
@@ -747,6 +849,104 @@ def cmd_respond(args, st: dict) -> None:
         return
     for line in respond_lines(ans, prop, res, prev):
         print(line)
+
+
+def cmd_conflict(args, st: dict) -> None:
+    """The student's calendar no longer fits a locked plan: ask the relay for the next common time."""
+    code, circ = pick_circle(st, args.circle)
+    pid = (args.id or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{8}", pid):
+        fail(f"bad --id '{args.id}': use the 8 character proposal id from inbox or plans.", 6)
+    if args.free is None:
+        fail("conflict needs --free with your student's current free windows (use --free \"\" for none).", 6)
+    body = {"free_windows": [check_window(t) for t in csv(args.free)], "today": parse_today(args.today).isoformat()}
+    res = http("POST", server_url(st), f"/proposals/{pid}/conflict", body, token=circ["token"])
+    prop = res.get("proposal") or {}
+    prop.setdefault("id", pid)
+    if res.get("rescheduled"):
+        stale_calendar(st, pid)
+        remember_windows(st, [prop])
+    save_state(st)
+    if args.json:
+        emit(res)
+        return
+    if res.get("rescheduled"):
+        waiting = ", ".join(prop.get("to_names") or []) or "your friends"
+        print(f"Rescheduled: {what_text(prop)} · {when_text(prop)}{place_text(prop)}. Waiting for {waiting} to confirm {id_tag(st, pid)}")
+    else:
+        print({"limit": "Not rescheduled: this plan was already moved twice.",
+               "no_window": "No other shared time found. The plan stays as it is.",
+               "not_locked": "Nothing to reschedule: the plan is not locked in yet."}.get(res.get("reason"), "Not rescheduled."))
+
+
+def cmd_cheered(args, st: dict) -> None:
+    code, circ = pick_circle(st, args.circle)
+    members = get_members(st, code, circ).get("members", [])
+    fid = resolve_targets(members, circ["member_id"], [args.friend])[0]
+    res = http("POST", server_url(st), f"/circles/{code}/cheer", {"friend_id": fid}, token=circ["token"])
+    if args.json:
+        emit(res)
+        return
+    who = names_of(members, [fid])[0]
+    print(f"Logged: you checked on {who}." if res.get("logged", True) else f"Already logged that you checked on {who}.")
+
+
+def cmd_public(args, st: dict) -> None:
+    code, circ = pick_circle(st, args.circle)
+    on = args.state == "on"
+    res = http("POST", server_url(st), f"/circles/{code}/public", {"on": on}, token=circ["token"])
+    if args.json:
+        emit(res)
+        return
+    if on:
+        url = res.get("watch_url") or f"{server_url(st)}/circle?c={code}"
+        print(f"Watchable by code: on. Anyone with the code {code} can watch names, plans and the agent log, never free times or courses.")
+        print(url)
+    else:
+        print("Watchable by code: off. The board needs a view link again.")
+
+
+def cmd_suggest(args, st: dict) -> None:
+    code, circ = pick_circle(st, args.circle)
+    today = parse_today(args.today)
+    members = get_members(st, code, circ).get("members", [])
+    targets = [t for chunk in args.with_ for t in csv(chunk)]
+    if not targets:
+        fail("--with needs at least one friend's name.", 6)
+    ids = resolve_targets(members, circ["member_id"], targets)
+    query = {"with": ",".join(ids), "today": today.isoformat()}
+    if args.course:
+        query["course"] = args.course.strip()
+    res = http("GET", server_url(st), f"/circles/{code}/suggest-times", token=circ["token"], query=query)
+    if args.json:
+        emit(res)
+        return
+    wins = res.get("windows") or []
+    if not wins:
+        missing = res.get("missing") or []
+        print("No shared time this week yet." + (f" No availability yet from: {', '.join(missing)}." if missing else ""))
+        return
+    for i, w in enumerate(wins, 1):
+        reasons = [r for r in (w.get("reasons") or []) if isinstance(r, str) and r]
+        top = reason_text({"reasons": reasons, "course": res.get("course")}).strip()[1:-1]
+        why = "; ".join(([top] if top else []) + reasons[1:3])
+        print(f"{i}. {pretty_window(w.get('window'))} · {when_text(w)}" + (f" - {why}" if why else ""))
+
+
+def cmd_plans(args, st: dict) -> None:
+    """Locked plans in the next few days, so the quick check can re-check them against the student's calendar."""
+    code, circ = pick_circle(st, args.circle)
+    today = parse_today(args.today)
+    last = (today + timedelta(days=args.within)).isoformat()
+    feed = http("GET", server_url(st), f"/circles/{code}/feed", token=circ["token"], query={"today": today.isoformat()})
+    plans = [p for p in feed.get("proposals") or []
+             if p.get("status") == "accepted" and today.isoformat() <= str(p.get("date") or "") <= last]
+    plans.sort(key=lambda p: (str(p.get("date")), str(p.get("time"))))
+    if args.json:
+        emit({"plans": plans})
+        return
+    for p in plans:
+        print(f"Locked: {what_text(p)} · {when_text(p)}{place_text(p)}{remind_text(p)} {id_tag(st, p.get('id'))}")
 
 
 def cmd_members(args, st: dict) -> None:
@@ -858,6 +1058,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--free")
     s.add_argument("--courses-file")
     s.add_argument("--courses-json")
+    s.add_argument("--prefers", help="times of day the student tends to prefer, e.g. evening,morning (needs free consent)")
+    s.add_argument("--avoid-days", help="weekdays the student wants to avoid, e.g. fri,sat (needs free consent)")
     s.add_argument("--can-help", action="append")
     s.add_argument("--want-help", action="append")
     s.add_argument("--win", action="append")
@@ -877,11 +1079,29 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ranked best first, e.g. tue-evening,thu-evening (--window also works)")
     s.add_argument("--time")
     s.add_argument("--note")
+    s.add_argument("--places", help='up to 3 places separated by |, e.g. "Hayden Library 2nd floor|Zoom"')
     s.add_argument("--today")
     s = add("respond")
     s.add_argument("--id", required=True)
     s.add_argument("--answer", required=True, help="yes, no or busy")
     s.add_argument("--free", help="with busy: your student's current free windows, comma separated")
+    s.add_argument("--place", type=int, help="with yes: number (from 0) of the proposed place the student picked")
+    s.add_argument("--place-suggest", help="with yes: a different place the student suggests")
+    s.add_argument("--today")
+    s = add("conflict")
+    s.add_argument("--id", required=True)
+    s.add_argument("--free", help="the student's current free windows, comma separated (\"\" for none)")
+    s.add_argument("--today")
+    s = add("cheered")
+    s.add_argument("--friend", required=True)
+    s = add("public")
+    s.add_argument("state", choices=["on", "off"])
+    s = add("suggest")
+    s.add_argument("--with", dest="with_", action="append", required=True, help="friend names, comma separated or repeated")
+    s.add_argument("--course")
+    s.add_argument("--today")
+    s = add("plans")
+    s.add_argument("--within", type=int, default=3, help="days ahead to list (default 3)")
     s.add_argument("--today")
     add("members")
     s = add("log")
@@ -906,7 +1126,8 @@ def main() -> None:
         cmd_consent(args, st)
     else:
         {"share": cmd_share, "feed": cmd_feed, "inbox": cmd_inbox, "mark-added": cmd_mark_added,
-         "propose": cmd_propose, "respond": cmd_respond, "members": cmd_members, "log": cmd_log,
+         "propose": cmd_propose, "respond": cmd_respond, "conflict": cmd_conflict, "cheered": cmd_cheered,
+         "public": cmd_public, "suggest": cmd_suggest, "plans": cmd_plans, "members": cmd_members, "log": cmd_log,
          "log-link": cmd_log_link, "pause": cmd_toggle, "resume": cmd_toggle, "leave": cmd_leave,
          "status": cmd_status}[c](args, st)
 

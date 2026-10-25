@@ -33,6 +33,9 @@ export function createMongoStore(db) {
     async deleteCircleAll(code) {
       await Promise.all(['circles', 'members', 'signals', 'proposals', 'log', 'demos'].map((n) => c[n].deleteMany(n === 'circles' ? { code } : { circle_code: code })));
     },
+    async setCircle(code, set) {
+      await c.circles.updateOne({ code }, { $set: set });
+    },
     /** Sets view_key only if the circle has none yet (race-safe); returns the key that is stored. */
     async ensureViewKey(code, key) {
       await c.circles.updateOne({ code, view_key: { $exists: false } }, { $set: { view_key: key } });
@@ -57,7 +60,7 @@ export function createMongoStore(db) {
         c.circles.countDocuments({ demo: { $ne: true } }),
         c.proposals.countDocuments(real),
         c.proposals.countDocuments({ ...real, status: 'accepted' }),
-        c.log.countDocuments({ ...real, type: { $in: ['moved', 'countered'] } }),
+        c.log.countDocuments({ ...real, type: { $in: ['moved', 'countered', 'rescheduled'] } }),
       ]);
       return { students, circles, plans_locked, agent_moves, proposals };
     },
@@ -87,7 +90,7 @@ export function createMongoStore(db) {
       await c.proposals.updateOne({ id }, { $set: set });
     },
     /** Atomic: records one member's answer on a still-open proposal. Returns the updated proposal or null. */
-    setResponse: (id, memberId, answer) => c.proposals.findOneAndUpdate({ id, status: 'open' }, { $set: { [`responses.${memberId}`]: answer } }, { returnDocument: 'after', projection: { _id: 0 } }),
+    setResponse: (id, memberId, answer, extra = {}) => c.proposals.findOneAndUpdate({ id, status: 'open' }, { $set: { ...extra, [`responses.${memberId}`]: answer } }, { returnDocument: 'after', projection: { _id: 0 } }),
     /** Atomic compare-and-set: applies `set` only if the proposal matches `match` (e.g. {status:'open'}). Returns the updated proposal or null. */
     transitionProposal: (id, match, set) => c.proposals.findOneAndUpdate({ ...match, id }, { $set: set }, { returnDocument: 'after', projection: { _id: 0 } }),
     async deleteProposals(ids) {
@@ -96,7 +99,25 @@ export function createMongoStore(db) {
     async addLog(entry) {
       await c.log.insertOne({ ...entry });
     },
-    listLog: (code, limit) => c.log.find({ circle_code: code }, NO_ID).sort({ ts: -1, _id: -1 }).limit(limit).toArray(),
+    /** Newest first. Entries keep their `_id` (exposed to clients as the entry `id`, a 24 hex string). */
+    listLog: (code, limit) => c.log.find({ circle_code: code }).sort({ ts: -1, _id: -1 }).limit(limit).toArray(),
+    /**
+     * Entries newer than a cursor, newest first. `since` is a Date or a log entry id (24 hex). An id that no longer exists
+     * (expired or scrubbed) falls back to the latest `limit` entries.
+     */
+    async listLogSince(code, since, limit) {
+      const { ObjectId } = await import('mongodb');
+      let filter;
+      if (since instanceof Date) filter = { ts: { $gt: since } };
+      else {
+        const ref = await c.log.findOne({ circle_code: code, _id: new ObjectId(since) });
+        if (!ref) return c.log.find({ circle_code: code }).sort({ ts: -1, _id: -1 }).limit(limit).toArray();
+        filter = { $or: [{ ts: { $gt: ref.ts } }, { ts: ref.ts, _id: { $gt: ref._id } }] };
+      }
+      return c.log.find({ circle_code: code, ...filter }).sort({ ts: -1, _id: -1 }).limit(limit).toArray();
+    },
+    /** Cheer entries (who checked on whom) since a date; ids only, never content. */
+    listCheers: (code, since) => c.log.find({ circle_code: code, type: 'cheered', ts: { $gte: since } }, { projection: { _id: 0, actor_id: 1, target_id: 1, ts: 1 } }).toArray(),
     /** mapper(entry) -> object of fields to $set, or null to leave the entry alone. */
     async scrubLog(code, mapper) {
       const ops = [];

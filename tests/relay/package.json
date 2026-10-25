@@ -1,0 +1,7 @@
+{
+  "name": "orbit-relay-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node relay.test.mjs" },
+  "dependencies": { "mongodb": "6.21.0", "mongodb-memory-server": "11.3.0" }
+}

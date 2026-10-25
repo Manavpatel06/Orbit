@@ -1,6 +1,6 @@
 ---
 name: orbit
-description: Lets your Cubbie coordinate with your friends' Cubbies in a private circle to match study sessions, plan hangouts and check on friends with big days. Unlike a solo study plan, it adds coordination with friends' Cubbies. Use when the student says study with friends, who's free, study buddy, who's in my class, check on my friends, my circle, orbit, join circle code, start a circle, a friend has an exam or a big day, or wants to show up for friends on a busy week.
+description: Lets your Cubbie coordinate with your friends' Cubbies in a private circle to match study sessions, plan hangouts and check on friends with big days. Unlike a solo study plan, it adds coordination with friends' Cubbies. Use when the student says study with friends, who's free, study buddy, who's in my class, check on my friends, my circle, orbit, join circle code, start a circle, a friend has an exam or a big day, make my circle watchable, or wants to show up for friends on a busy week.
 ---
 
 # Orbit
@@ -14,6 +14,7 @@ Orbit makes Cubbie multiplayer. Your Cubbie and your friends' Cubbies share a fe
 - "Check on my friends" or "Does anyone have a big week?"
 - "Manas has an exam, what should I say to him?"
 - "Show me my circle log" or "pause Orbit" or "leave my circle"
+- "Make my circle watchable" or "let judges watch my circle by its code"
 
 Do not use it for a solo study plan (use the study plan Skill), for emailing professors, or to message friends directly. Orbit never sends texts for the student.
 
@@ -70,9 +71,10 @@ Sharing is automatic. Never ask the student questions here and never ask them fo
 5. Big days: dates with an exam or interview, or with 2 or more deadlines. Pass them as `--big-days`.
 6. Help topics (only if consented): use topics the student has recently asked Cubbie to explain or help with for one of their courses, as `--want-help "CSE 576:HMMs"`. Add `--can-help` only for topics the student has said they are good at. If there are none, leave them out. Do not ask.
 7. Wins (only if consented): a big project, exam or application the student submitted or finished in the last 2 days (from Canvas submissions or email), as a short phrase like `--win "submitted the CSE 576 project"`. If there are none, leave it out. Do not ask.
-8. Always pass the student's local date as `--today YYYY-MM-DD`.
+8. Preferences (only if the student agreed to share free windows, and only when the calendar shows a clear pattern): the parts of the day they usually keep free, like evening, as `--prefers evening`, and weekdays they usually keep clear of plans, like Friday, as `--avoid-days fri`. These help Orbit pick better times and are never shown to friends. Work them out from the last few weeks of the calendar. Do not ask.
+9. Always pass the student's local date as `--today YYYY-MM-DD`.
 
-Run: `python3 scripts/orbit.py share --today <date> --busy <level> --big-days <dates> --free <tokens> --courses-file <path> ...`
+Run: `python3 scripts/orbit.py share --today <date> --busy <level> --big-days <dates> --free <tokens> --prefers <parts> --avoid-days <days> --courses-file <path> ...`
 
 Delete the temp courses file afterwards. During a scheduled check-in, share silently; when the student asked, say one line: "Updated what your circle sees."
 
@@ -86,14 +88,15 @@ In a scheduled check-in, run `feed --new-only` instead. It prints only what has 
 
 ## Proposing
 
-1. Work out the windows yourself, with no question to the student. From the feed's friend free windows and the student's own free windows (Sharing step 1), list the windows both have free. Rank them: before the shared exam or quiz date first, sooner first. Keep up to 3. If the friend already has an open proposal for this course, skip it and say nothing. If no windows overlap, say "No shared time this week yet." and stop.
-2. Never propose without the student's yes. Ask one question with a default: "Ask Manas to study CSE 576? I'll suggest Tue evening, or Thu if that's taken. yes?"
-3. After yes: `python3 scripts/orbit.py propose --to "<name>" --kind study --course "CSE 576" --windows tue-evening,thu-evening --today <date>`. The windows are ranked best first. Use `--kind hangout` for non-study plans, without `--course`. Leave out `--time` (the server picks the time) unless the student gave one. Add `--note` only if the student gave one.
-4. Say: "Asked. I will tell you when they answer." Never text the friend.
+1. Get ranked times from Orbit, with no question to the student: `python3 scripts/orbit.py suggest --with "<name>" --course "CSE 576" --today <date>` (leave out `--course` for a hangout, repeat names with commas for a group). It prints up to 5 windows, best first, each with the reason, for example "1. Thu evening · Thu Oct 29 · 7:00 PM - before your quiz Fri; free for Manav and Manas". It already counts everyone's free windows, preferences and the shared exam date. If it prints "No shared time this week yet.", tell the student that and stop. If the friend already has an open proposal for this course, skip it and say nothing.
+2. Choose up to 3 places yourself, never ask for them: a place from the student's past study events on the calendar, their campus library, or Zoom as the backup. For a hangout, a cafe near campus.
+3. Never propose without the student's yes. Ask one question with a default that names the time, the place and the reminder: "Ask Manas to study CSE 576 Tue 7 PM at Hayden Library? If it locks I'll add it to your calendar and remind you an hour before. I'll try Thu if Tue is taken. yes?" Remember whether they said yes to the reminder.
+4. After yes: `python3 scripts/orbit.py propose --to "<name>" --kind study --course "CSE 576" --windows tue-evening,thu-evening --places "Hayden Library 2nd floor|Zoom" --today <date>`. Use the window tokens from `suggest` (run it with `--json` to read them), best first. Use `--kind hangout` for non-study plans, without `--course`. Leave out `--time` (the server picks the time) unless the student gave one. Add `--note` only if the student gave one.
+5. Say: "Asked. I will tell you when they answer." Never text the friend.
 
 ## Group plans
 
-For "find a time for all of us", propose to several friends at once with repeated `--to`: `python3 scripts/orbit.py propose --to "Manas" --to "Reya" --kind study --course "CSE 576" --windows tue-evening,thu-evening --today <date>`. Use only windows that every friend and the student have free, and ask the student the same one yes/no question first, naming everyone.
+For "find a time for all of us", propose to several friends at once with repeated `--to`: `python3 scripts/orbit.py propose --to "Manas" --to "Reya" --kind study --course "CSE 576" --windows tue-evening,thu-evening --today <date>`. Take the windows from `suggest --with "Manas,Reya"`, which only lists times everyone has free, and ask the student the same one yes/no question first, naming everyone.
 
 - Each friend's Cubbie checks its own student's calendar and answers on its own. A busy answer moves the plan to the next time that works for everyone.
 - The plan locks when all of them say yes.
@@ -101,19 +104,21 @@ For "find a time for all of us", propose to several friends at once with repeate
 
 ## Answering requests
 
-A line "Needs you: ... (id X)" from `inbox` or `feed` is a request from a friend. Handle it in this order, without asking the student anything you can check yourself.
+A line "Needs you: ... (id X)" from `inbox` or `feed` is a request from a friend. It shows the day, time, place options and the top reason, for example "Needs you: Manav wants to study CSE 576 · Thu Oct 29 · 7:00 PM · Hayden Library 2nd floor or Zoom (before your quiz Fri) (id X)". Handle it in this order, without asking the student anything you can check yourself.
 
 1. Check the student's own Google Calendar for that day and time (the line shows both; the window is the fallback). Read it the way Sharing step 1 does.
 2. Not free: run `python3 scripts/orbit.py respond --id X --answer busy --free <current free windows, comma separated> --today <date>`. Use the free windows from Sharing step 1, or an empty value if there are none. Do not ask the student and do not text anyone. Say nothing to the student unless a new time lands (it then shows up as another "Needs you" line).
-3. Free: ask once, yes or no, with the day, time and course from the line: "Manav wants to study CSE 576 Thu 7 PM. You're free then. Lock it in? yes?"
-   - Yes: `python3 scripts/orbit.py respond --id X --answer yes --today <date>`. If the reply starts with "Locked in:", handle it under Plans and updates. Otherwise say nothing more.
+3. Free: ask once, yes or no, with the day, time, first place and course from the line: "Manav wants to study CSE 576 Thu 7 PM at Hayden Library 2nd floor. You're free then. Lock it in and remind you an hour before? yes?" A line that says "(rescheduled: ...)" means the friend's calendar changed: ask "Manas's calendar changed. Move Study CSE 576 to Sat 2 PM at Zoom? Lock it in and remind you an hour before? yes?"
+   - Yes: `python3 scripts/orbit.py respond --id X --answer yes --place 0 --today <date>`. The number is the place the student agreed to, counting from 0 in the order shown on the line (leave out `--place` if the line has no place). If the student's yes names a different place, use `--place-suggest "<their place>"` instead; do not ask for one. If the reply starts with "Locked in:", handle it under Plans and updates. Otherwise say nothing more.
    - No: `python3 scripts/orbit.py respond --id X --answer no --today <date>`. If the reply includes a counter, say one line: "Passed. Suggested Fri afternoon to Manas instead." Ask nothing else.
 
 ## Plans and updates
 
 Lines from `inbox` and `feed` that start with "Locked in:" or "Update:" are plan news. Handle them like this.
 
-- "Locked in: ... (id X)": add the plan to the student's Google Calendar once, using the date and time on the line, then run `python3 scripts/orbit.py mark-added --id X`. Text one line, such as "Locked in: Study CSE 576 with Manas, Thu 7 PM." Leave out the friend's name if the line does not give it. After a yes that returned "Locked in:", use the id you answered.
+- "Locked in: ... (id X)": add the plan to the student's Google Calendar once, using the date, time and place on the line, then run `python3 scripts/orbit.py mark-added --id X`. Text one line, such as "Locked in: Study CSE 576 with Manas, Thu 7 PM at Hayden Library." Leave out the friend's name if the line does not give it. After a yes that returned "Locked in:", use the id you answered.
+- Reminder: the line ends with "remind 6:00 PM" before the id. Set ONE Cubbie reminder at that time ("Study CSE 576 with Manas at Hayden Library in 1 hour"), but only if the student said yes to the reminder when they locked or proposed it. If you do not know, skip the reminder and do not ask again.
+- "(id X, move the old calendar entry)": this plan was on the calendar at an earlier time. Move that calendar event and its reminder to the new time instead of adding a second one, run `mark-added --id X`, and text one line: "Moved: Study CSE 576 with Manas is now Sat 2 PM."
 - If the line says "(id X, already on your calendar)", do not add it again and do not text it again.
 - "Update: ... moved your plan ..." or "Countered: ...": if the student proposed the plan and nothing is needed from them, text one line such as "Manas's Cubbie moved your study time to Thu evening. Nothing needed from you." Otherwise say nothing. A new time that needs an answer arrives as a "Needs you" line.
 - "No shared time for ... this week.": if the student proposed the plan, text one line saying so.
@@ -124,7 +129,16 @@ Lines from `inbox` and `feed` that start with "Locked in:" or "Update:" are plan
 Each check-in runs later on its own, so it names this Skill and what to run.
 
 - Two daily refreshes (if the student said yes in First time): "Orbit check-in: follow the Orbit Skill's Sharing steps to refresh my circle signals from my calendar, Gmail and Canvas, then from the Orbit Skill folder run python3 scripts/orbit.py feed --new-only --today <today>. Text me at most two nudges, only what it prints. If it prints nothing, stay silent."
-- Quick check (if the student said yes): "Orbit quick check, every 30 minutes from 9 am to 11 pm: from the Orbit Skill folder run python3 scripts/orbit.py inbox --today <today>. If it prints nothing, stay silent. For each line, follow the Orbit Skill's Answering requests and Plans and updates sections. Text me only for a line that needs my yes or no, a Locked in line, or an update that needs nothing from me."
+- Quick check (if the student said yes): "Orbit quick check, every 30 minutes from 9 am to 11 pm: from the Orbit Skill folder run python3 scripts/orbit.py inbox --today <today>. If it prints nothing, stay silent. For each line, follow the Orbit Skill's Answering requests and Plans and updates sections. Then follow the Orbit Skill's Locked plans that break section for the next 3 days. Text me only for a line that needs my yes or no, a Locked in line, or an update that needs nothing from me."
+
+## Locked plans that break
+
+In every quick check, after the inbox, re-check the locked plans against the calendar. Never ask the student anything here.
+
+1. Run `python3 scripts/orbit.py plans --today <date>`. It prints nothing when no plan is locked in the next 3 days. Each line looks like "Locked: Study CSE 576 · Thu Oct 29 · 7:00 PM · Hayden Library (id X)".
+2. For each plan, read the student's Google Calendar at that date and time. Ignore the event you added for this plan. If something else now takes that time, the plan no longer works.
+3. Then run silently: `python3 scripts/orbit.py conflict --id X --free <current free windows, comma separated> --today <date>`. Use the free windows from Sharing step 1. Orbit finds the next time that works for everyone, and the friends' Cubbies are asked to confirm it. Say nothing to the student yet.
+4. If it prints "Rescheduled: ...", do nothing more now. When the new time is confirmed, a "Locked in: ... (id X, move the old calendar entry)" line arrives and Plans and updates tells you what to do; then send the one line to the student. If it prints "No other shared time found", "already moved twice" or "not locked in yet", stay silent too.
 
 ## Check-on and celebrate nudges
 
@@ -133,6 +147,15 @@ Nudges only repeat what a friend posted, like "Manas: big day tomorrow". Never g
 1. Say the fact in one line and offer: "Manas has a big day tomorrow. Want a short text to send him?"
 2. After yes, write one short line in the student's own voice, like "Big day tomorrow, you got this. Study after?" Show it as a draft.
 3. The student sends it themselves. Never send it for them, and never contact the friend.
+4. Optional, only after the student says they sent it: run `python3 scripts/orbit.py cheered --friend "<name>"`. It adds "Manav checked on Reya" to the circle log. It never records what the message said.
+
+## Make my circle watchable
+
+When the student asks to let judges or friends watch the circle live, or you are setting up a demo:
+
+1. Ask one question: "Want your circle watchable by its code? Anyone with the code can watch names, plans and what the Cubbies did, but never free times or courses. yes?"
+2. After yes run `python3 scripts/orbit.py public on`. It prints the code and a watch link. Text the code on its own line, then the link on its own line.
+3. To turn it off, after the student asks run `python3 scripts/orbit.py public off`.
 
 ## Circle log link
 

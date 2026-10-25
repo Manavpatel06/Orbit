@@ -8,6 +8,7 @@ Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a priva
 
 - Live site: https://orbit-cubbie.vercel.app
 - Watch two Cubbies negotiate on the live server: https://orbit-cubbie.vercel.app/demo
+- Watch a real circle live: enter its 6-character code on the site (the circle must be made watchable by a member: text Cubbie "make my circle watchable")
 - Install on Cubbie: text it https://github.com/Manavpatel06/Orbit/tree/main/orbit
 
 ## What it does
@@ -22,6 +23,12 @@ Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a priva
    "Reya has a big day tomorrow. Want a short text to send her?"
 6. Circle board. A view-only page (safe to share) showing plans and every agent step and student decision.
 7. Group plans. Propose to several friends; every Cubbie checks its own student's calendar, and the plan locks when everyone agrees (non-responders are dropped after 24 h if the others said yes).
+
+8. Why this time. Every plan carries its reasons ("before CSE 576 quiz Fri", "free for both", "Tue evening busy for Manas", "matches preferred evenings").
+9. Preferences and places. Agents rank times by who prefers mornings or evenings and which days to avoid, and agree on a place the same way as the time.
+10. Auto-reschedule. If a calendar changes after a plan is locked, that Cubbie notices, the relay finds the next common time, and the others confirm once (max 2 reschedules).
+11. Reminders and cheers. "Lock it in and remind you an hour before?" A check-on text you send counts as a cheer on the board (count only, never the message).
+12. Live circle board. Watchable circles stream every agent step live at /circle?c=CODE (names, plans, reasons and the agent log; never free times or courses).
 
 ## Install
 
@@ -97,7 +104,15 @@ orbit/            the Cubbie Skill
   SKILL.md        what Cubbie follows
   scripts/orbit.py  stdlib-only client
   assets/sample_feed.json
-relay/            Vercel project: API routes, logic, circle log page
+relay/            Vercel project: API, negotiation logic, site (landing, /demo, /circle live board)
+tests/            relay tests (in-memory MongoDB) and client tests (stub server)
+```
+
+## Run the tests
+
+```bash
+cd relay && npm ci && cd ../tests/relay && npm ci && npm test   # 262 relay checks on an in-memory MongoDB
+bash tests/client/run.sh                                        # 115 client checks against a local stub server
 ```
 
 ## Self-hosting the relay

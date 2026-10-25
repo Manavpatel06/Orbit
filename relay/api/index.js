@@ -30,6 +30,18 @@ function rateLimit(req) {
   if (list.length > 120) throw new HttpError(429, 'rate_limited', 'Too many requests, please slow down and try again in a few minutes.');
 }
 
+// public (keyless) board reads: 60 per minute per IP
+const pubHits = new Map();
+function publicRateLimit(req) {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'x').split(',')[0].trim();
+  const t = Date.now();
+  const list = (pubHits.get(ip) || []).filter((x) => t - x < 60000);
+  list.push(t);
+  pubHits.set(ip, list);
+  if (pubHits.size > 5000) pubHits.clear();
+  if (list.length > 60) throw new HttpError(429, 'rate_limited', 'Too many requests, please slow down and try again in a minute.');
+}
+
 async function readBody(req) {
   let b;
   try {
@@ -88,9 +100,12 @@ async function authMember(store, token, code) {
 }
 
 // kind: who produced the entry - the student's Cubbie (agent), the student's own decision, or Orbit itself.
-const DEFAULT_KIND = { joined: 'student', left: 'system', shared: 'agent', proposed: 'agent', accepted: 'student', declined: 'student', countered: 'system', moved: 'agent', paused: 'student', resumed: 'student' };
+const DEFAULT_KIND = { joined: 'student', left: 'system', shared: 'agent', proposed: 'agent', accepted: 'student', declined: 'student', countered: 'system', moved: 'agent', paused: 'student', resumed: 'student', rescheduled: 'agent', cheered: 'student', public: 'system' };
 const kindOf = (e) => e.kind || DEFAULT_KIND[e.type] || 'system';
-const log = (store, code, actor, type, text, actor_id, kind) => store.addLog({ circle_code: code, ts: new Date(), actor, actor_id: actor_id || null, type, kind: kind || DEFAULT_KIND[type] || 'system', text });
+const log = (store, code, actor, type, text, actor_id, kind, extra) => store.addLog({ circle_code: code, ts: new Date(), actor, actor_id: actor_id || null, type, kind: kind || DEFAULT_KIND[type] || 'system', text, ...(extra || {}) });
+const logView = (e) => ({ id: e._id ? String(e._id) : null, ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text });
+/** When a proposal (re)opened: created, or last rescheduled. Drives the 24 h timeout and the 7/14 day windows. */
+const bornAt = (p) => new Date(p.reopened_at || p.created_at);
 const todayParam = (v) => (v === undefined || v === null || v === '' ? new Date().toISOString().slice(0, 10) : L.isISODate(v) ? v : (() => { throw new HttpError(400, 'bad_today', 'today must be an ISO date (YYYY-MM-DD).'); })());
 
 const newViewKey = () => crypto.randomBytes(12).toString('hex');
@@ -168,17 +183,17 @@ async function sweepProposals(store, proposals) {
   const out = [];
   let names = null;
   for (const p of proposals) {
-    if (p.status !== 'open' || Date.now() - new Date(p.created_at).getTime() <= TIMEOUT_MS) { out.push(p); continue; }
+    if (p.status !== 'open' || Date.now() - bornAt(p).getTime() <= TIMEOUT_MS) { out.push(p); continue; }
     if (!names) names = new Map((await store.listMembers(p.circle_code)).map((m) => [m.member_id, m.name]));
     const yes = p.to_ids.filter((i) => p.responses[i] === 'yes');
     let next;
     if (p.to_ids.length >= 2 && yes.length) {
       const date = p.date || L.windowDate(p.window, String(iso(p.created_at)).slice(0, 10));
       const time = p.time || L.canonTime(p.window);
-      next = await store.transitionProposal(p.id, { status: 'open' }, { to_ids: yes, status: 'accepted', date, time, updated_at: new Date(), change: 'accepted' });
+      next = await store.transitionProposal(p.id, { status: 'open' }, { to_ids: yes, status: 'accepted', date, time, place: L.pickPlace(p), remind_at: L.remindAt(date, time), updated_at: new Date(), change: 'accepted' });
       if (next) {
         const dropped = p.to_ids.filter((i) => !yes.includes(i)).map((i) => names.get(i) || FORMER).join(' and ');
-        const what = `${p.kind === 'study' ? (p.course ? `Study ${p.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(date)} · ${L.prettyTime(time)}`;
+        const what = `${p.kind === 'study' ? (p.course ? `Study ${p.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(date)} · ${L.prettyTime(time)}${L.pickPlace(p) ? ` · ${L.pickPlace(p)}` : ''}`;
         await log(store, p.circle_code, 'Orbit', 'accepted', `${dropped} didn't answer in time; plan set for the rest. Plan set: ${what}`, null, 'system');
       }
     } else {
@@ -198,9 +213,31 @@ function proposalView(p, names, me) {
     round: p.round || 1, note: p.note || '',
     status: p.status, responses: p.responses, parent_id: p.parent_id || null, created_at: iso(p.created_at),
     moved_by_name: p.moved_by_name || null,
+    reasons: p.reasons || [], places: p.places || [], place: p.place || null, remind_at: p.remind_at || null,
+    reschedules: p.reschedules || 0, change: p.change || null, updated_at: iso(p.updated_at),
     my_response: me ? p.responses[me] || null : null,
   };
 }
+
+/** Every window already tried or rejected for this proposal and its counter chain, so nothing ping-pongs. */
+async function excludedWindows(store, p) {
+  const excluded = new Set([p.window, ...(p.tried || [])]);
+  for (let q = p, i = 0; q && q.parent_id && i < 10; i++) {
+    q = await store.getProposal(q.parent_id);
+    if (q && q.circle_code === p.circle_code) {
+      excluded.add(q.window);
+      (q.tried || []).forEach((w) => excluded.add(w));
+    }
+  }
+  return excluded;
+}
+/** Fields set when a proposal locks in (all answered yes). */
+function lockFields(cur, today) {
+  const date = cur.date || L.windowDate(cur.window, today);
+  const time = cur.time || L.canonTime(cur.window);
+  return { status: 'accepted', date, time, place: L.pickPlace(cur), remind_at: L.remindAt(date, time), updated_at: new Date(), change: 'accepted' };
+}
+const planLine = (q) => `${q.kind === 'study' ? (q.course ? `Study ${q.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}${q.place ? ` · ${q.place}` : ''}`;
 
 // ---------- handlers ----------
 const H = {
@@ -236,6 +273,8 @@ const H = {
     return [200, {
       code, name: circle.name,
       view_url: `${originOf(ctx.req)}/circle?c=${code}&v=${viewKey}`,
+      public_board: !!circle.public_board,
+      watch_url: `${originOf(ctx.req)}/circle?c=${code}`,
       members: members.map((m) => ({ member_id: m.member_id, name: m.name, paused: !!m.paused, has_signal: live.has(m.member_id), updated_at: iso(live.get(m.member_id)?.updated_at) })),
     }];
   },
@@ -261,7 +300,7 @@ const H = {
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     const cutoff = Date.now() - 7 * 86400000;
     const mine = proposals
-      .filter((p) => ['open', 'countered', 'accepted'].includes(p.status) && new Date(p.created_at).getTime() >= cutoff && (p.from_id === me.member_id || p.to_ids.includes(me.member_id)))
+      .filter((p) => ['open', 'countered', 'accepted'].includes(p.status) && bornAt(p).getTime() >= cutoff && (p.from_id === me.member_id || p.to_ids.includes(me.member_id)))
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .map((p) => proposalView(p, names, me.member_id));
     return [200, {
@@ -275,21 +314,27 @@ const H = {
   async propose(ctx, code) {
     const me = await authMember(ctx.store, ctx.token, code);
     const input = L.sanitizeProposalInput(ctx.body, me.member_id);
-    const members = await ctx.store.listMembers(code);
+    const [members, signals] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code)]);
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     for (const id of input.to) if (!names.has(id)) throw new HttpError(400, 'unknown_member', 'One of the people you picked is not in this circle.');
     const today = todayParam(ctx.body.today);
     const now = new Date();
+    const live = liveSignals(signals, members);
+    const mine = signals.find((x) => x.member_id === me.member_id && L.isLive(x));
+    const people = [me.member_id, ...input.to].map((i) => ({ name: names.get(i), sig: i === me.member_id ? mine : live.get(i) }));
     const p = {
       id: crypto.randomBytes(4).toString('hex'), circle_code: code, from_id: me.member_id, to_ids: input.to, kind: input.kind,
       window: input.window, windows: input.windows, date: L.windowDate(input.window, today), time: input.time || L.canonTime(input.window),
       round: 1, tried: [input.window], note: input.note, status: 'open', responses: {}, parent_id: null, created_at: now,
+      places: input.places, place: null, place_votes: {}, reschedules: 0,
+      reasons: L.explainWindow(people, input.window, { today, course: input.kind === 'study' ? input.course : null }),
     };
     if (input.course) p.course = input.course;
     await ctx.store.insertProposal(p);
     const who = input.to.map((i) => names.get(i)).join(' and ');
+    const where = input.places.length ? ` at ${input.places.join(' or ')}` : '';
     const order = input.windows.length > 1 ? `: ${input.windows.map(L.prettyWindow).join(', then ')}` : ` (${L.prettyWindow(input.window)})`;
-    await log(ctx.store, code, me.name, 'proposed', `${me.name}'s Cubbie proposed a ${input.kind === 'study' ? 'study session' : 'hangout'} to ${who}${order}.`, me.member_id, 'agent');
+    await log(ctx.store, code, me.name, 'proposed', `${me.name}'s Cubbie proposed a ${input.kind === 'study' ? 'study session' : 'hangout'} to ${who}${order}${where}.`, me.member_id, 'agent');
     return [200, proposalView(p, names, me.member_id)];
   },
 
@@ -302,6 +347,18 @@ const H = {
     const answer = ctx.body.answer;
     if (answer !== 'yes' && answer !== 'no' && answer !== 'busy') throw new HttpError(400, 'bad_answer', 'answer must be yes, no or busy.');
     const freeWindows = answer === 'busy' && ctx.body.free_windows !== undefined && ctx.body.free_windows !== null ? L.windowList(ctx.body.free_windows, 21, 'free_windows') : null;
+    // optional place answer, only meaningful with yes
+    let placeVote = null;
+    if (answer === 'yes') {
+      const { place_choice: choice, place_suggest: suggest } = ctx.body;
+      const hasChoice = choice !== undefined && choice !== null;
+      const hasSuggest = suggest !== undefined && suggest !== null && suggest !== '';
+      if (hasChoice && hasSuggest) throw new HttpError(400, 'bad_place', 'Pick a place from the list or suggest one, not both.');
+      if (hasChoice) {
+        if (!Number.isInteger(choice) || choice < 0 || choice >= (p.places || []).length) throw new HttpError(400, 'bad_place', 'place_choice must be the number of one of the proposed places.');
+        placeVote = p.places[choice];
+      } else if (hasSuggest) placeVote = L.sanitizePlace(suggest, 'place_suggest');
+    }
     if (p.status !== 'open') throw new HttpError(409, 'proposal_closed', `This proposal is already ${p.status}.`);
     const today = todayParam(ctx.body.today);
     const code = p.circle_code;
@@ -314,17 +371,15 @@ const H = {
       throw new HttpError(409, 'proposal_closed', `This proposal is already ${cur ? cur.status : 'closed'}.`);
     };
     const label = (q) => `${q.kind === 'study' ? 'study session' : 'hangout'} (${L.prettyWindow(q.window)})`;
-    const plan = (q) => `${q.kind === 'study' ? (q.course ? `Study ${q.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}`;
 
     if (answer === 'yes') {
-      let cur = await ctx.store.setResponse(id, me.member_id, 'yes'); // atomic: concurrent yeses cannot overwrite each other
+      let cur = await ctx.store.setResponse(id, me.member_id, 'yes', placeVote ? { [`place_votes.${me.member_id}`]: placeVote } : {}); // atomic: concurrent yeses cannot overwrite each other
       if (!cur) return closed();
       if (cur.to_ids.every((i) => cur.responses[i] === 'yes')) {
-        const date = cur.date || L.windowDate(cur.window, today);
-        const won = await ctx.store.transitionProposal(id, { status: 'open' }, { status: 'accepted', date, time: cur.time || L.canonTime(cur.window), updated_at: new Date(), change: 'accepted' });
+        const won = await ctx.store.transitionProposal(id, { status: 'open' }, lockFields(cur, today));
         if (won) {
           cur = won;
-          await log(ctx.store, code, me.name, 'accepted', `${me.name} said yes. Plan set: ${plan(cur)}`, me.member_id, 'student');
+          await log(ctx.store, code, me.name, 'accepted', `${me.name} said yes. Plan set: ${planLine(cur)}`, me.member_id, 'student');
         } else cur = (await ctx.store.getProposal(id)) || cur;
       }
       return view(cur);
@@ -332,19 +387,8 @@ const H = {
 
     const live = liveSignals(await ctx.store.listSignals(code), members);
     const parts = [p.from_id, ...p.to_ids];
-    // exclude every window already turned down in this proposal and its counter chain, so nothing ping-pongs
-    const excluded = new Set([p.window, ...(p.tried || [])]);
-    for (let q = p, i = 0; q && q.parent_id && i < 10; i++) {
-      q = await ctx.store.getProposal(q.parent_id);
-      if (q && q.circle_code === code) {
-        excluded.add(q.window);
-        (q.tried || []).forEach((w) => excluded.add(w));
-      }
-    }
-    const beforeDateFor = (sigs) => {
-      if (p.kind !== 'study' || !p.course) return undefined;
-      return sigs.filter(Boolean).flatMap((s) => (s.courses || []).filter((c) => c.code === p.course).flatMap((c) => c.events.map((e) => e.date))).filter((d) => d >= today).sort()[0];
-    };
+    const excluded = await excludedWindows(ctx.store, p);
+    const course = p.kind === 'study' ? p.course || null : null;
 
     if (answer === 'busy') {
       // The responder's Cubbie checked its own student's calendar: the window is not free. Try the next candidate in place.
@@ -355,20 +399,27 @@ const H = {
         live.set(me.member_id, { ...(live.get(me.member_id) || {}), free: freeWindows });
       }
       const myFree = (live.get(me.member_id) || {}).free || null;
+      const people = parts.map((i) => ({ name: nm(i), sig: i === me.member_id ? { ...(live.get(i) || {}), free: myFree || undefined } : live.get(i) }));
       const round = p.round || 1;
       let win = null;
+      let reasons = [];
+      const note = `${L.prettyWindow(p.window)} busy for ${me.name}`;
       if (myFree && round < L.MAX_ROUNDS) {
         // group plans: a window must be free for the proposer and ALL invitees (those with a live signal)
         const allFree = (w) => p.to_ids.length < 2 || parts.every((i) => { const f = i === me.member_id ? myFree : (live.get(i) || {}).free; return !f || f.includes(w); });
         win = (p.windows || []).find((w) => !excluded.has(w) && myFree.includes(w) && allFree(w)) || null;
-        if (!win) {
-          const sigs = parts.map((i) => (i === me.member_id ? { free: myFree } : live.get(i)));
-          if (sigs.every(Boolean)) win = L.nextBestWindow(sigs, { declined: [...excluded], today, beforeDate: beforeDateFor(sigs) });
+        if (win) reasons = L.explainWindow(people, win, { today, course, note });
+        else {
+          const best = L.rankWindows(people, { today, course, exclude: [...excluded], limit: 1 })[0];
+          if (best) {
+            win = best.window;
+            reasons = L.explainWindow(people, win, { today, course, note });
+          }
         }
       }
       const checked = `${me.name}'s Cubbie checked their calendar — ${L.prettyWindow(p.window)} is busy.`;
       if (win) {
-        const set = { window: win, date: L.windowDate(win, today), time: L.canonTime(win), responses: { [p.from_id]: 'yes' }, round: round + 1, tried: [...excluded, win], updated_at: new Date(), change: 'moved', moved_by_name: me.name };
+        const set = { window: win, date: L.windowDate(win, today), time: L.canonTime(win), responses: { [p.from_id]: 'yes' }, round: round + 1, tried: [...excluded, win], reasons, place_votes: {}, updated_at: new Date(), change: 'moved', moved_by_name: me.name, moved_by_id: me.member_id };
         const moved = await ctx.store.transitionProposal(id, { status: 'open', window: p.window }, set);
         if (!moved) return view((await ctx.store.getProposal(id)) || p); // someone else moved/closed it first
         await log(ctx.store, code, me.name, 'moved', `${checked} Moved to ${L.prettyWindow(win)}.`, me.member_id, 'agent');
@@ -382,8 +433,9 @@ const H = {
 
     // answer === 'no': the student declined; Orbit looks for a counter, skipping every window already rejected
     const responses = { ...p.responses, [me.member_id]: 'no' };
-    const sigs = parts.map((i) => live.get(i));
-    const win = sigs.every(Boolean) ? L.nextBestWindow(sigs, { declined: [...excluded], today, beforeDate: beforeDateFor(sigs) }) : null;
+    const people = parts.map((i) => ({ name: nm(i), sig: live.get(i) }));
+    const best = L.rankWindows(people, { today, course, exclude: [...excluded], limit: 1 })[0];
+    const win = best ? best.window : null;
     const status = win ? 'countered' : 'declined';
     const upd = await ctx.store.transitionProposal(id, { status: 'open' }, { responses, status, updated_at: new Date(), change: status });
     if (!upd) return closed();
@@ -396,11 +448,61 @@ const H = {
       to_ids: [p.from_id, ...p.to_ids.filter((i) => i !== me.member_id)], kind: p.kind, window: win, windows: [win],
       date: L.windowDate(win, today), time: L.canonTime(win), round: 1, tried: [...excluded, win], note: '',
       status: 'open', responses: {}, parent_id: p.id, created_at: new Date(),
+      places: p.places || [], place: null, place_votes: {}, reschedules: 0,
+      reasons: L.explainWindow(people, win, { today, course, note: `${me.name} can't do ${L.prettyWindow(p.window)}` }),
     };
     if (p.course) counter.course = p.course;
     await ctx.store.insertProposal(counter);
     await log(ctx.store, code, 'Orbit', 'countered', `${me.name} can't do ${L.prettyWindow(p.window)}. Orbit suggested ${L.prettyWindow(win)} instead.`, null, 'system');
     return view(upd, false, counter);
+  },
+
+  /**
+   * A participant's Cubbie reports that a locked plan's time is no longer free. The relay finds the next common window,
+   * reopens the plan (round + 1, max 2 reschedules) and everyone else must confirm again.
+   */
+  async conflict(ctx, id) {
+    const me = await authMember(ctx.store, ctx.token);
+    let p = await ctx.store.getProposal(id);
+    if (!p || p.circle_code !== me.circle_code) throw new HttpError(404, 'proposal_not_found', 'No such proposal.');
+    [p] = await sweepProposals(ctx.store, [p]);
+    if (p.from_id !== me.member_id && !p.to_ids.includes(me.member_id)) throw new HttpError(404, 'not_participant', 'You are not part of that plan.');
+    const free = ctx.body.free_windows !== undefined && ctx.body.free_windows !== null ? L.windowList(ctx.body.free_windows, 21, 'free_windows') : null;
+    const today = todayParam(ctx.body.today);
+    const code = p.circle_code;
+    const members = await ctx.store.listMembers(code);
+    const names = new Map(members.map((m) => [m.member_id, m.name]));
+    const nm = (i) => names.get(i) || FORMER;
+    const view = (q, rescheduled, reason) => [200, { proposal: proposalView(q, names, me.member_id), rescheduled, ...(reason ? { reason } : {}) }];
+    if (p.status === 'open') return view(p, false, 'not_locked'); // not locked yet: the normal busy answer handles it
+    if (p.status !== 'accepted') throw new HttpError(409, 'proposal_closed', `This proposal is already ${p.status}.`);
+    if ((p.reschedules || 0) >= L.MAX_RESCHEDULES) return view(p, false, 'limit');
+    const live = liveSignals(await ctx.store.listSignals(code), members);
+    if (free) {
+      const old = await ctx.store.getSignal(code, me.member_id);
+      const t = new Date();
+      await ctx.store.putSignal(old ? { ...old, free } : { circle_code: code, member_id: me.member_id, free, updated_at: t, expires_at: new Date(t.getTime() + 8 * 86400000) });
+      live.set(me.member_id, { ...(live.get(me.member_id) || {}), free });
+    }
+    const parts = [p.from_id, ...p.to_ids];
+    const people = parts.map((i) => ({ name: nm(i), sig: live.get(i) }));
+    const excluded = await excludedWindows(ctx.store, p);
+    const course = p.kind === 'study' ? p.course || null : null;
+    const best = L.rankWindows(people, { today, course, exclude: [...excluded], limit: 1 })[0];
+    if (!best) return view(p, false, 'no_window');
+    const win = best.window;
+    const newFrom = me.member_id;
+    const set = {
+      from_id: newFrom, to_ids: [p.from_id, ...p.to_ids].filter((i) => i !== newFrom).filter((i, k, a) => a.indexOf(i) === k),
+      window: win, windows: [win], date: L.windowDate(win, today), time: L.canonTime(win), status: 'open', responses: { [newFrom]: 'yes' },
+      round: (p.round || 1) + 1, reschedules: (p.reschedules || 0) + 1, tried: [...excluded, win], place_votes: {}, remind_at: null,
+      reasons: L.explainWindow(people, win, { today, course, note: `${L.prettyWindow(p.window)} no longer free for ${me.name}` }),
+      updated_at: new Date(), reopened_at: new Date(), change: 'rescheduled', moved_by_name: me.name, moved_by_id: me.member_id,
+    };
+    const next = await ctx.store.transitionProposal(id, { status: 'accepted', window: p.window }, set);
+    if (!next) return view((await ctx.store.getProposal(id)) || p, false, 'not_locked'); // someone else rescheduled it first
+    await log(ctx.store, code, me.name, 'rescheduled', `${me.name}'s Cubbie found a new conflict. Proposed ${L.prettyWindow(win)} instead.`, me.member_id, 'agent');
+    return view(next, true);
   },
 
   async inbox(ctx, code) {
@@ -413,10 +515,10 @@ const H = {
     const proposals = await sweepProposals(ctx.store, proposalsRaw);
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     const cutoff = Date.now() - 7 * 86400000;
-    const recent = proposals.filter((p) => new Date(p.created_at).getTime() >= cutoff);
+    const recent = proposals.filter((p) => bornAt(p).getTime() >= cutoff);
     const needs = recent.filter((p) => p.status === 'open' && p.to_ids.includes(me.member_id) && !p.responses[me.member_id])
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((p) => proposalView(p, names, me.member_id));
-    const updates = recent.filter((p) => p.from_id === me.member_id && p.updated_at && new Date(p.updated_at) > since && p.change)
+    const updates = recent.filter((p) => p.from_id === me.member_id && p.updated_at && new Date(p.updated_at) > since && p.change && !(p.change === 'rescheduled' && p.moved_by_id === me.member_id))
       .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)).map((p) => ({ ...proposalView(p, names, me.member_id), change: p.change, updated_at: iso(p.updated_at) }));
     const live = liveSignals(signals, members);
     const mySig = signals.find((s) => s.member_id === me.member_id && L.isLive(s)) || null;
@@ -470,36 +572,120 @@ const H = {
     return [200, {
       name: circle.name,
       members: members.map((m) => m.name),
-      entries: entries.map((e) => ({ ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text })),
+      entries: entries.map(logView),
     }];
   },
 
-  /** Judge-safe read-only board: who is in the circle (busy level only), recent plans, the agent log, and counters. */
+  /**
+   * Read-only board for judges and friends: members (busy level + cheers), recent plans, the agent log and counters.
+   * Access: a member bearer token, the circle's view key (?v=), or no key at all when the circle is public (rate limited).
+   * ?since=<log entry id or ISO ts> limits `log` to newer entries (members/plans are always complete).
+   */
   async board(ctx, code) {
-    if (!ctx.token && ctx.query.get('v') !== null) await viewAuth(ctx, code);
-    else await authMember(ctx.store, ctx.token, code);
-    const [circle, members, signals, proposalsRaw, entries, moves] = await Promise.all([
-      ctx.store.getCircle(code), ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code),
-      ctx.store.listLog(code, 60), ctx.store.countLog(code, ['moved', 'countered']),
+    let circle;
+    if (ctx.token) await authMember(ctx.store, ctx.token, code);
+    else if (ctx.query.get('v') !== null) circle = await viewAuth(ctx, code);
+    else {
+      circle = await ctx.store.getCircle(code);
+      if (!circle) throw new HttpError(404, 'code_not_found', 'No circle with that code.');
+      if (!circle.public_board) throw new HttpError(404, 'not_public', 'This circle is not watchable by code. Ask a member to turn on "watch by code".');
+      publicRateLimit(ctx.req);
+    }
+    const sinceRaw = ctx.query.get('since');
+    let since = null;
+    if (sinceRaw) {
+      if (/^[0-9a-f]{24}$/.test(sinceRaw)) since = sinceRaw;
+      else {
+        since = new Date(sinceRaw);
+        if (Number.isNaN(since.getTime())) throw new HttpError(400, 'bad_since', 'since must be a log entry id or an ISO timestamp.');
+      }
+    }
+    const weekAgo = new Date(Date.now() - 7 * 86400000);
+    const [circleDoc, members, signals, proposalsRaw, entries, moves, cheers] = await Promise.all([
+      circle || ctx.store.getCircle(code), ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code),
+      since ? ctx.store.listLogSince(code, since, 100) : ctx.store.listLog(code, 60),
+      ctx.store.countLog(code, ['moved', 'countered', 'rescheduled']), ctx.store.listCheers(code, weekAgo),
     ]);
+    const [newest] = since ? await ctx.store.listLog(code, 1) : entries;
     const proposals = await sweepProposals(ctx.store, proposalsRaw);
     const live = liveSignals(signals, members);
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     const cutoff = Date.now() - 14 * 86400000;
+    const sent = new Map();
+    const got = new Map();
+    for (const c of cheers) {
+      sent.set(c.actor_id, (sent.get(c.actor_id) || 0) + 1);
+      got.set(c.target_id, (got.get(c.target_id) || 0) + 1);
+    }
     return [200, {
-      name: circle.name,
+      name: circleDoc.name,
+      public_board: !!circleDoc.public_board,
       members: members.map((m) => {
         const s = live.get(m.member_id);
-        return { name: m.name, ...(s && s.busy ? { busy: s.busy } : {}), updated_at: iso(s && s.updated_at) };
+        return { name: m.name, ...(s && s.busy ? { busy: s.busy } : {}), updated_at: iso(s && s.updated_at), cheers: sent.get(m.member_id) || 0, cheers_received: got.get(m.member_id) || 0 };
       }),
-      plans: proposals.filter((p) => new Date(p.created_at).getTime() >= cutoff)
+      plans: proposals.filter((p) => bornAt(p).getTime() >= cutoff)
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .map((p) => ({
-          kind: p.kind, course: p.course || null, date: p.date || null, time: p.time || null, status: p.status, round: p.round || 1,
+          id: p.id, kind: p.kind, course: p.course || null, window: p.window, date: p.date || null, time: p.time || null, status: p.status, round: p.round || 1,
           from_name: names.get(p.from_id) || FORMER, to_names: p.to_ids.map((i) => names.get(i) || FORMER), created_at: iso(p.created_at),
+          updated_at: iso(p.updated_at || p.created_at), change: p.change || null, moved_by_name: p.moved_by_name || null,
+          reasons: p.reasons || [], places: p.places || [], place: p.place || null, remind_at: p.remind_at || null, reschedules: p.reschedules || 0,
         })),
-      log: entries.map((e) => ({ ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text })),
+      log: entries.map(logView),
+      cursor: newest && newest._id ? String(newest._id) : sinceRaw || null,
+      now: nowIso(),
       stats: { proposals: proposals.length, locked: proposals.filter((p) => p.status === 'accepted').length, agent_moves: moves },
+    }];
+  },
+
+  /** A member opts the circle's board in or out of being watched by code alone. */
+  async setPublic(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    if (typeof ctx.body.on !== 'boolean') throw new HttpError(400, 'bad_input', 'on must be true or false.');
+    const circle = await ctx.store.getCircle(code);
+    if (circle.demo) throw new HttpError(403, 'demo_circle', 'Demo circles are always watchable with their link.');
+    if (!!circle.public_board !== ctx.body.on) {
+      await ctx.store.setCircle(code, { public_board: ctx.body.on });
+      await log(ctx.store, code, me.name, 'public', ctx.body.on ? `${me.name} made the board watchable by code` : `${me.name} turned off watching by code`, me.member_id, 'system');
+    }
+    return [200, { ok: true, public_board: ctx.body.on, watch_url: `${originOf(ctx.req)}/circle?c=${code}` }];
+  },
+
+  /** "Manav checked on Reya": logs only that it happened, never any message content. */
+  async cheer(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    const fid = ctx.body.friend_id;
+    if (typeof fid !== 'string' || !/^[0-9a-f]{8}$/.test(fid) || fid === me.member_id) throw new HttpError(400, 'bad_input', 'friend_id must be the member_id of another member.');
+    const friend = await ctx.store.getMember(code, fid);
+    if (!friend) throw new HttpError(400, 'unknown_member', 'That person is not in this circle.');
+    const recent = await ctx.store.listCheers(code, new Date(Date.now() - 10 * 60000));
+    if (recent.some((c) => c.actor_id === me.member_id && c.target_id === fid)) return [200, { ok: true, logged: false }];
+    await log(ctx.store, code, me.name, 'cheered', `${me.name} checked on ${friend.name} 💬`, me.member_id, 'student', { target_id: fid });
+    return [200, { ok: true, logged: true }];
+  },
+
+  /** Ranked windows (max 5) free for me and the listed friends, each with reasons. */
+  async suggestTimes(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    const today = todayParam(ctx.query.get('today'));
+    const ids = [...new Set(String(ctx.query.get('with') || '').split(',').map((x) => x.trim()).filter(Boolean))];
+    if (!ids.length || ids.length > 11 || ids.some((i) => !/^[0-9a-f]{8}$/.test(i))) throw new HttpError(400, 'bad_input', 'with must list one or more member_ids, comma separated.');
+    if (ids.includes(me.member_id)) throw new HttpError(400, 'bad_input', 'with must not include yourself.');
+    const courseRaw = ctx.query.get('course');
+    const course = courseRaw ? L.normalizeCourse(courseRaw) : null;
+    if (courseRaw && !course) throw new HttpError(400, 'bad_input', 'course is not a valid course code (try "CSE 576").');
+    const [members, signals] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code)]);
+    const names = new Map(members.map((m) => [m.member_id, m.name]));
+    for (const i of ids) if (!names.has(i)) throw new HttpError(400, 'unknown_member', 'One of the people you picked is not in this circle.');
+    const live = liveSignals(signals, members);
+    const mine = signals.find((x) => x.member_id === me.member_id && L.isLive(x));
+    const people = [me.member_id, ...ids].map((i) => ({ id: i, name: names.get(i), sig: i === me.member_id ? mine : live.get(i) }));
+    const missing = people.filter((x) => !x.sig || !Array.isArray(x.sig.free)).map((x) => x.name);
+    const ranked = L.rankWindows(people, { today, course, limit: 5 });
+    return [200, {
+      course, with: ids.map((i) => names.get(i)), missing,
+      windows: ranked.map((r) => ({ window: r.window, date: L.windowDate(r.window, today), time: L.canonTime(r.window), reasons: r.reasons })),
     }];
   },
 
@@ -521,9 +707,9 @@ const H = {
     const quiz = L.windowDate('fri-evening', today);
     const week_of = L.weekMonday(today);
     const people = [
-      ['manav', 'Manav', { week_of, busy: 'busy', free: ['tue-evening', 'thu-evening'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
+      ['manav', 'Manav', { week_of, busy: 'busy', prefers: ['evening'], free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
       // Manas's coarse estimate still shows Tue evening as open; his calendar says otherwise (step 5)
-      ['manas', 'Manas', { week_of, busy: 'busy', free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
+      ['manas', 'Manas', { week_of, busy: 'busy', prefers: ['evening'], avoid_days: ['mon'], free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
       ['reya', 'Reya', { week_of, busy: 'packed', big_days: [L.addDays(today, 1)], free: ['wed-evening'], wins: ['Finished my capstone draft'], courses: [{ code: 'BIO 201', events: [{ kind: 'exam', title: 'Midterm', date: L.addDays(today, 1) }] }] }],
     ];
     const ids = {};
@@ -557,7 +743,7 @@ const H = {
 };
 
 let statsCache = null;
-const DEMO_STEPS = 10;
+const DEMO_STEPS = 14;
 const demoHits = new Map();
 function demoRateLimit(req) {
   const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'x').split(',')[0].trim();
@@ -593,16 +779,22 @@ async function runDemoStep(store, demo, n) {
   const out = (actor, channel, text, bubbles, extra = {}) => ({ step: n, total: DEMO_STEPS, actor, channel, text, bubble: bubbles[0] || null, bubbles, ...extra, done: n === DEMO_STEPS });
   const lastLog = async () => {
     const [e] = await store.listLog(code, 1);
-    return e ? { ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text } : undefined;
+    return e ? logView(e) : undefined;
   };
-  const planOf = (q) => ({ kind: q.kind, course: q.course || null, window: q.window, date: q.date, time: q.time, status: q.status, round: q.round || 1, from_name: q.from_name, to_names: q.to_names });
+  const planOf = (q) => ({
+    id: q.id, kind: q.kind, course: q.course || null, window: q.window, date: q.date, time: q.time, status: q.status, round: q.round || 1,
+    from_name: q.from_name, to_names: q.to_names, reasons: q.reasons || [], places: q.places || [], place: q.place || null,
+    remind_at: q.remind_at || null, reschedules: q.reschedules || 0, change: q.change || null,
+  });
   const getPlan = async () => {
     const members = await store.listMembers(code);
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     return proposalView(await store.getProposal(demo.proposal_id), names, null);
   };
   const manavFeed = () => demoCall(store, H.feed, tokens.manav, {}, { today }, code);
-  const planLine = (q) => `Study ${q.course} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}`;
+  const planLineOf = (q) => `${q.kind === 'study' ? `Study ${q.course}` : 'Hangout'} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}${q.place ? ` · ${q.place}` : ''}`;
+  const placesText = (q) => (q.place ? q.place : (q.places || []).join(' or '));
+  const remindText = (q) => (q.remind_at ? `Reminder set for ${clock(q.remind_at.slice(11, 16))}.` : '');
 
   switch (n) {
     case 1: {
@@ -618,9 +810,9 @@ async function runDemoStep(store, demo, n) {
     case 2:
       return out('manav', 'left', 'yes', [bub('left', 'student', 'yes')]);
     case 3: {
-      const pr = await demoCall(store, H.propose, tokens.manav, { to: [ids.manas], kind: 'study', course: 'CSE 576', windows: ['tue-evening', 'thu-evening'], today }, {}, code);
+      const pr = await demoCall(store, H.propose, tokens.manav, { to: [ids.manas], kind: 'study', course: 'CSE 576', windows: ['tue-evening', 'thu-evening'], places: ['Hayden Library 2nd floor', 'Zoom'], today }, {}, code);
       await store.updateDemo(demo.demo_id, { proposal_id: pr.id });
-      return out('manav_cubbie', 'agents', `Manav's Cubbie proposed Study CSE 576: ${winLabel(pr.windows[0])}, then ${winLabel(pr.windows[1])}.`, [], { log_entry: await lastLog(), plan: planOf(pr) });
+      return out('manav_cubbie', 'agents', `Manav's Cubbie proposed Study CSE 576: ${winLabel(pr.windows[0])}, then ${winLabel(pr.windows[1])} · ${placesText(pr)}. Why: ${(pr.reasons[0] || 'free for both')}.`, [], { log_entry: await lastLog(), plan: planOf(pr) });
     }
     case 4: {
       const inbox = await demoCall(store, H.inbox, tokens.manas, {}, { today }, code);
@@ -634,21 +826,44 @@ async function runDemoStep(store, demo, n) {
     }
     case 6: {
       const q = await getPlan();
-      const text = `Manav wants to study ${q.course} ${dayWord(q.window, today)} ${clock(q.time)}. You're free then. Lock it in?`;
+      const text = `Manav wants to study ${q.course} ${dayWord(q.window, today)} ${clock(q.time)} at ${q.places[0]}. You're free then. Lock it in?`;
       return out('manas_cubbie', 'right', text, [bub('right', 'cubbie', text)], { plan: planOf(q) });
     }
     case 7: {
-      const r = await demoCall(store, H.respond, tokens.manas, { answer: 'yes', today }, {}, demo.proposal_id);
+      const r = await demoCall(store, H.respond, tokens.manas, { answer: 'yes', place_choice: 0, today }, {}, demo.proposal_id);
       return out('manas', 'right', 'yes', [bub('right', 'student', 'yes')], { log_entry: await lastLog(), plan: planOf(r.proposal) });
     }
     case 8: {
       const inbox = await demoCall(store, H.inbox, tokens.manav, {}, { today }, code); // Manav's Cubbie sees the accepted plan
       const q = inbox.updates.find((x) => x.id === demo.proposal_id) || (await getPlan());
-      const text = `Locked in: ${planLine(q)}`;
-      const added = 'Added to your calendar.';
+      const text = `Locked in: ${planLineOf(q)}`;
+      const added = `Added to your calendar. ${remindText(q)}`.trim();
       return out('orbit', 'left', text, [bub('left', 'cubbie', `${text}\n${added}`), bub('right', 'cubbie', `${text}\n${added}`)], { plan: planOf(q) });
     }
     case 9: {
+      // Manas's calendar changed after the lock-in: his Cubbie reports the conflict and the relay finds a new common window
+      const r = await demoCall(store, H.conflict, tokens.manas, { free_windows: ['sat-afternoon'], today }, {}, demo.proposal_id);
+      const q = r.proposal;
+      const entry = await lastLog();
+      return out('manas_cubbie', 'agents', entry && entry.type === 'rescheduled' ? entry.text : `Manas's Cubbie found a new conflict. Proposed ${winLabel(q.window)} instead.`, [], { log_entry: entry, plan: planOf(q) });
+    }
+    case 10: {
+      const inbox = await demoCall(store, H.inbox, tokens.manav, {}, { today }, code);
+      const q = inbox.needs_answer.find((x) => x.id === demo.proposal_id) || (await getPlan());
+      const text = `Manas's calendar changed. Move Study ${q.course} to ${dayWord(q.window, today)} ${clock(q.time)} at ${placesText(q)}? yes?`;
+      return out('manav_cubbie', 'left', text, [bub('left', 'cubbie', text)], { plan: planOf(q) });
+    }
+    case 11: {
+      const r = await demoCall(store, H.respond, tokens.manav, { answer: 'yes', today }, {}, demo.proposal_id);
+      return out('manav', 'left', 'yes', [bub('left', 'student', 'yes')], { log_entry: await lastLog(), plan: planOf(r.proposal) });
+    }
+    case 12: {
+      const q = await getPlan();
+      const text = `Locked in: ${planLineOf(q)}`;
+      const moved = `Calendar updated. ${remindText(q)}`.trim();
+      return out('orbit', 'left', text, [bub('left', 'cubbie', `${text}\n${moved}`), bub('right', 'cubbie', `${text}\n${moved}`)], { plan: planOf(q) });
+    }
+    case 13: {
       const feed = await manavFeed();
       const c = feed.suggestions.find((s) => s.type === 'check_on');
       const text = `${c ? c.friend_name : 'Reya'} has a big day tomorrow. Want a short text to send her?`;
@@ -656,7 +871,8 @@ async function runDemoStep(store, demo, n) {
     }
     default: {
       const draft = 'Big day tomorrow, you got this. coffee after? ☕';
-      return out('manav', 'left', draft, [bub('left', 'student', 'yes'), bub('left', 'cubbie', draft)], { note: 'You send it, not the AI.' });
+      await demoCall(store, H.cheer, tokens.manav, { friend_id: ids.reya }, {}, code); // Manav sends it himself; Orbit only logs that he checked on her
+      return out('manav', 'left', draft, [bub('left', 'student', 'yes'), bub('left', 'cubbie', draft)], { note: 'You send it, not the AI.', log_entry: await lastLog() });
     }
   }
 }
@@ -678,12 +894,16 @@ function route(method, parts) {
       if (c === 'leave' && method === 'POST') return [H.leave, code];
       if (c === 'log' && method === 'GET') return [H.getLog, code];
       if (c === 'board' && method === 'GET') return [H.board, code];
+      if (c === 'public' && method === 'POST') return [H.setPublic, code];
+      if (c === 'cheer' && method === 'POST') return [H.cheer, code];
+      if (c === 'suggest-times' && method === 'GET') return [H.suggestTimes, code];
     }
   }
   if (a === 'stats' && parts.length === 1 && method === 'GET') return [H.stats];
   if (a === 'demo' && b === 'start' && parts.length === 2 && method === 'POST') return [H.demoStart];
   if (a === 'demo' && c === 'step' && parts.length === 3 && method === 'POST') return [H.demoStep, b];
   if (a === 'proposals' && parts.length === 3 && c === 'respond' && method === 'POST') return [H.respond, b];
+  if (a === 'proposals' && parts.length === 3 && c === 'conflict' && method === 'POST') return [H.conflict, b];
   return null;
 }
 

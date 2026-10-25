@@ -12,36 +12,130 @@
 <link rel="stylesheet" href="/orbit.css">
 <script src="/orbit.js"></script>
 <style>
-body{background:radial-gradient(60% 40% at 50% 0,rgba(11,132,254,.10),transparent 70%),#000;background-attachment:fixed}
-.top{padding:44px 0 28px;display:flex;flex-wrap:wrap;gap:20px 32px;align-items:flex-end;justify-content:space-between}
-.top h1{font-size:clamp(30px,4vw,48px);line-height:1.05;font-weight:670;letter-spacing:-.04em}
-.top .meta{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
-.ro{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:999px;background:rgba(11,132,254,.12);border:1px solid rgba(11,132,254,.4);color:#6bb8ff;font-size:13px;font-weight:620}
-.kpis{display:flex;gap:0;border:1px solid var(--line);border-radius:18px;background:var(--s2);overflow:hidden}
-.kpis div{padding:14px 24px;border-left:1px solid var(--line)}.kpis div:first-child{border-left:0}
-.kpis b{display:block;font-size:26px;font-weight:650;letter-spacing:-.04em;line-height:1.1;font-variant-numeric:tabular-nums}
-.kpis span{color:var(--mu);font-size:13px}
-.grid{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:28px;padding-bottom:64px;align-items:start}
-.panel{border:1px solid var(--line);border-radius:22px;background:var(--s1);overflow:hidden}
-.panel+.panel{margin-top:20px}
-.panel h2{font-size:15px;font-weight:620;letter-spacing:-.015em;padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
-.panel h2 span{color:var(--mu);font-weight:450;font-size:13px}
-.mem{display:flex;align-items:center;gap:12px;padding:12px 20px;border-top:1px solid var(--line)}
-.mem:first-of-type{border-top:0}
-.av{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;background:linear-gradient(145deg,#0B84FE,#0a4fa8);flex:none}
-.mem:nth-of-type(2n) .av{background:linear-gradient(145deg,#5e5ce6,#32308f)}.mem:nth-of-type(3n) .av{background:linear-gradient(145deg,#bf5af2,#6b2d8c)}
-.mem b{font-weight:580;letter-spacing:-.015em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.mem small{color:var(--mu);font-size:12px}
-.plan{padding:16px 20px;border-top:1px solid var(--line)}.plan:first-of-type{border-top:0}
-.plan .r{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
-.plan b{font-weight:620;letter-spacing:-.02em;font-size:16px}
-.plan p{color:var(--mu);font-size:13.5px;margin-top:3px}
-.plan .when{color:#e5e5ea;font-size:14.5px;margin-top:6px;font-variant-numeric:tabular-nums}
-.panel .logwrap{padding:4px 22px}
-.msg{padding:40px 0;text-align:center;color:var(--mu)}
-.foot{color:var(--mu);font-size:13px;text-align:center;padding:0 0 40px;display:flex;gap:10px;justify-content:center;align-items:center}
-@media (max-width:900px){.grid{grid-template-columns:1fr}.kpis{width:100%}.kpis div{flex:1;padding:12px 14px}.links a:not(.btn){display:none}}
-@media (max-width:520px){.wrap{width:calc(100% - 32px)}.panel .logwrap{padding:2px 16px}}
+:root{--violet2:#bf5af2;--pink:#ff375f;--ring:rgba(255,255,255,.14)}
+[hidden]{display:none!important}
+body{background:#000;height:100vh;height:100dvh;overflow:hidden;display:flex;flex-direction:column}
+@media (max-width:900px){body{height:auto;min-height:100vh;overflow:auto}}
+.nav .wrap{width:min(1920px,100% - 48px)}
+/* top bar */
+.bar{flex:none;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0 16px;border-bottom:1px solid var(--line)}
+.bar .wrap{width:min(1920px,100% - 48px);display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.bar h1{font-size:clamp(22px,2.2vw,30px);font-weight:660;letter-spacing:-.035em;line-height:1.1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .row{display:flex;align-items:center;gap:12px;margin-top:6px;flex-wrap:wrap}
+.code{display:inline-flex;gap:3px;font-variant-numeric:tabular-nums;font-weight:620;font-size:13px;letter-spacing:.04em;color:var(--tx)}
+.code b{display:inline-grid;place-items:center;min-width:24px;height:26px;padding:0 4px;border-radius:7px;background:var(--s3);border:1px solid var(--line2)}
+.lives{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;color:var(--mu)}
+.lives.warn{color:var(--amber)}.lives.warn .live{background:var(--amber);animation:none}
+.lives.bad{color:var(--red)}.lives.bad .live{background:var(--red);animation:none}
+.lives.idle .live{background:#636366;animation:none}
+.rolink{font-size:14px;color:var(--mu);text-decoration:none}.rolink:hover{color:var(--tx)}
+/* body */
+.board{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(400px,.8fr);gap:0;width:min(1920px,100% - 48px);margin:0 auto;width:min(1920px,100% - 48px)}
+.stage{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;padding:24px 32px 20px 0;border-right:1px solid var(--line)}
+.orbit{position:relative;width:min(100%,calc(100vh - 330px),680px);aspect-ratio:1;flex:none}
+.orbit svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.orbit .ring{fill:none;stroke:var(--ring);stroke-width:.22;vector-effect:non-scaling-stroke}
+.orbit .ring2{fill:none;stroke:rgba(255,255,255,.06);stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:2 6}
+.chord{fill:none;stroke-width:1.4;vector-effect:non-scaling-stroke;transition:opacity .6s}
+.chord.locked{stroke:var(--green);opacity:.55}
+.chord.open{stroke:var(--blue);opacity:.5;stroke-dasharray:4 6}
+.chord.move{stroke:var(--amber);opacity:.6}
+.core{position:absolute;left:50%;top:50%;width:21%;height:21%;transform:translate(-50%,-50%)}
+.core .mark{width:100%;height:100%}
+.node{position:absolute;left:var(--x);top:var(--y);width:0;height:0;z-index:2}
+.node .av{position:absolute;left:0;top:0;width:clamp(56px,7.4vw,84px);height:clamp(56px,7.4vw,84px);margin:calc(clamp(56px,7.4vw,84px) / -2) 0 0 calc(clamp(56px,7.4vw,84px) / -2);border-radius:50%;display:grid;place-items:center;font-weight:680;font-size:clamp(18px,2vw,26px);letter-spacing:-.02em;background:linear-gradient(145deg,var(--c1),var(--c2));border:2px solid #000;box-shadow:0 0 0 1px var(--line2),0 16px 40px -14px rgba(0,0,0,.9);transition:box-shadow .5s,transform .5s}
+.node.hit .av{box-shadow:0 0 0 1px var(--line2),0 0 0 8px color-mix(in srgb,var(--blue) 25%,transparent),0 0 46px rgba(11,132,254,.7);transform:scale(1.05)}
+.node .who{position:absolute;left:0;top:calc(clamp(56px,7.4vw,84px) / 2 + 10px);transform:translateX(-50%);white-space:nowrap;text-align:center;display:flex;flex-direction:column;align-items:center;gap:5px}
+.node .nm{font-size:14.5px;font-weight:600;letter-spacing:-.015em}
+.node .cheer{font-size:12px;color:var(--mu);font-variant-numeric:tabular-nums}
+.node .cheer b{color:#ff8fa3;font-weight:650}
+.node .chip{height:22px;font-size:11.5px;padding:0 9px}
+.packet{position:absolute;left:0;top:0;transform:translate(-50%,-50%);z-index:4;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:6px;opacity:0}
+.packet .pk{width:12px;height:12px;border-radius:50%;background:var(--pc,var(--blue));box-shadow:0 0 0 5px color-mix(in srgb,var(--pc,var(--blue)) 25%,transparent),0 0 24px var(--pc,var(--blue))}
+.packet .lb{white-space:nowrap;font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:999px;background:#1c1c1f;border:1px solid var(--line2);color:#e5e5ea;box-shadow:0 10px 30px -10px rgba(0,0,0,.9)}
+.legend{position:absolute;left:0;right:0;bottom:14px;display:flex;gap:18px;flex-wrap:wrap;justify-content:center;font-size:12.5px;color:var(--mu)}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:middle;margin-right:7px}
+/* side */
+.side{display:grid;grid-template-rows:minmax(0,.9fr) minmax(0,1.1fr);min-height:0}
+.side section{display:flex;flex-direction:column;min-height:0}
+.side header{flex:none;display:flex;justify-content:space-between;align-items:baseline;padding:20px 0 12px 32px;font-size:15px;font-weight:640;letter-spacing:-.02em}
+.side header span{font-size:13px;color:var(--mu);font-weight:450}
+.plans{border-bottom:1px solid var(--line)}
+.scroll{flex:1;min-height:0;overflow:auto;padding:0 32px 24px}
+.scroll::-webkit-scrollbar{width:6px}.scroll::-webkit-scrollbar-thumb{background:#2c2c2e;border-radius:3px}
+.plan{position:relative;padding:14px 0 16px 18px;border-top:1px solid var(--line)}
+.plan:first-child{border-top:0}
+.plan::before{content:"";position:absolute;left:0;top:18px;bottom:18px;width:3px;border-radius:2px;background:var(--pc)}
+.plan.fresh{animation:land 1.2s ease-out}
+@keyframes land{from{background:linear-gradient(90deg,rgba(11,132,254,.14),transparent 70%)}to{background:transparent}}
+.plan .t{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}
+.plan .t b{font-size:16.5px;font-weight:640;letter-spacing:-.025em;line-height:1.25}
+.plan .who{margin-top:4px;color:var(--mu);font-size:13.5px}
+.plan .when{margin-top:8px;color:#e5e5ea;font-size:14.5px;font-variant-numeric:tabular-nums;line-height:1.45}
+.plan .when em{font-style:normal;color:var(--mu)}
+.plan details{margin-top:10px}
+.plan summary{cursor:pointer;list-style:none;font-size:13px;color:#6bb8ff;display:inline-flex;gap:7px;align-items:center;border-radius:6px}
+.plan summary::-webkit-details-marker{display:none}
+.plan summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin-left:2px;transition:transform .25s}
+.plan details[open] summary::after{transform:rotate(-135deg) translateY(-2px)}
+.why{list-style:none;margin-top:8px;display:grid;gap:7px;padding:0}
+.why li{position:relative;padding-left:16px;font-size:13.5px;color:#c7c7cc;line-height:1.4}
+.why li::before{content:"";position:absolute;left:2px;top:.55em;width:5px;height:5px;border-radius:50%;background:var(--blue)}
+.plan .move{margin-top:6px;font-size:12.5px;color:var(--amber)}
+.ctag{display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:620;white-space:nowrap;border:1px solid var(--cb);background:color-mix(in srgb,var(--cb) 12%,transparent);color:var(--cc)}
+.ctag i{width:6px;height:6px;border-radius:50%;background:currentColor}
+/* log */
+.logs{min-height:0}
+.log{list-style:none;padding:0;margin:0}
+.log li{display:grid;grid-template-columns:auto 1fr auto;gap:0 12px;align-items:start;padding:12px 0;border-top:1px solid var(--line);font-size:14.5px;line-height:1.45}
+.log li:first-child{border-top:0}
+.log li.in{animation:slide .6s cubic-bezier(.2,.8,.2,1) both}
+@keyframes slide{from{opacity:0;transform:translateY(-10px)}}
+.log .dt{width:8px;height:8px;border-radius:50%;margin-top:7px;background:var(--c);box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 18%,transparent)}
+.log .ev{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--mu)}
+.log .ev b{color:var(--c);font-weight:650;letter-spacing:-.005em}
+.log .tg{padding:1px 8px;border:1px solid var(--line2);border-radius:999px;font-size:11.5px;font-weight:550;color:#c7c7cc}
+.log .tx{grid-column:2;color:#e5e5ea;overflow-wrap:anywhere;margin-top:3px}
+.log .tm{color:var(--mu);font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap;margin-top:1px}
+.log .tx{grid-column:2/4}
+.empty{color:var(--mu);font-size:14px;padding:28px 0;text-align:center}
+/* states */
+.state{width:min(640px,100% - 48px);margin:auto;padding:64px 0;text-align:left}
+.state h2{font-size:clamp(26px,3vw,36px);font-weight:660;letter-spacing:-.035em;line-height:1.1;text-wrap:balance}
+.state p{margin-top:14px;color:var(--mu);font-size:16px;line-height:1.55;max-width:34em}
+.state p b{color:var(--tx);font-weight:560}
+.state .ac{margin-top:28px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.state form{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}
+.codein{width:min(260px,100%);height:56px;border-radius:16px;border:1px solid var(--line2);background:var(--s2);color:var(--tx);font:620 22px/1 var(--font);letter-spacing:.2em;text-transform:uppercase;padding:0 18px;outline:none;transition:border-color .2s}
+.codein::placeholder{color:#48484a;letter-spacing:.2em}
+.codein:focus{border-color:var(--blue);box-shadow:0 0 0 4px rgba(11,132,254,.2)}
+.codein.bad{border-color:var(--red)}
+.hint{min-height:20px;margin-top:10px;font-size:13.5px;color:var(--red)}
+.banner{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:9;display:flex;gap:10px;align-items:center;padding:9px 16px;border-radius:999px;background:#1c1c1f;border:1px solid var(--line2);font-size:13.5px;color:#e5e5ea;box-shadow:0 14px 40px -12px rgba(0,0,0,.9)}
+.banner[hidden]{display:none}
+/* mobile */
+@media (max-width:900px){
+  .board{grid-template-columns:1fr;width:calc(100% - 32px);flex:none}
+  .stage{border-right:0;padding:24px 0 8px;min-height:auto}
+  .orbit{width:min(100%,440px)}
+  .side{display:flex;flex-direction:column}
+  .side section{min-height:auto}
+  .side header{padding-left:0}
+  .plans{border-bottom:0}
+  .scroll{overflow:visible;padding:0 0 24px}
+  .logs .scroll{max-height:60vh;overflow:auto}
+  .node .av{width:58px;height:58px;margin:-29px 0 0 -29px}
+  .node .who{top:38px}
+  .node .nm{font-size:13px}
+  .node .chip{display:none}
+  .core{width:24%;height:24%}
+  .bar .wrap{width:calc(100% - 32px)}
+  .nav .wrap{width:calc(100% - 32px)}
+  .links a:not(.btn){display:none}
+  .packet .lb{font-size:11px}
+  .legend{position:static;margin:34px 0 4px}
+  .stage .banner{top:auto;bottom:auto}
+}
 </style>
 </head>
 <body>
@@ -49,62 +143,45 @@ body{background:radial-gradient(60% 40% at 50% 0,rgba(11,132,254,.10),transparen
   <a class="brand" href="/" aria-label="Orbit home"><script>document.write(O.mark(28))</script>Orbit</a>
   <nav class="links"><a href="/demo">Live demo</a><a class="btn sm" href="/">About Orbit</a></nav>
 </div></header>
-<main class="wrap">
-  <div class="top">
-    <div><div class="meta"><span class="ro"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 10S5 4 10 4s8.5 6 8.5 6-3.5 6-8.5 6-8.5-6-8.5-6z"/><circle cx="10" cy="10" r="2.6"/></svg>View-only</span><span class="chip grey" id="mc">Circle</span></div>
-    <h1 id="title">Circle board</h1></div>
-    <div class="kpis" id="kpis" hidden><div><b id="k1">0</b><span>proposals</span></div><div><b id="k2">0</b><span>locked in</span></div><div><b id="k3">0</b><span>agent moves</span></div></div>
+
+<div class="bar" id="bar" hidden><div class="wrap">
+  <div style="min-width:0">
+    <h1 id="title">Circle</h1>
+    <div class="row"><span class="code" id="code" aria-label="Circle code"></span><span class="lives idle" id="lives"><i class="live"></i><span id="ltxt">Connecting…</span></span></div>
   </div>
-  <div class="msg" id="msg">Loading the circle…</div>
-  <div class="grid" id="grid" hidden>
-    <aside>
-      <section class="panel"><h2>Members<span id="mn"></span></h2><div id="members"></div></section>
-      <section class="panel"><h2>Plans<span>last 14 days</span></h2><div id="plans"></div></section>
-    </aside>
-    <section class="panel"><h2>Agent log<span id="ln"></span></h2><div class="logwrap"><ol class="log" id="log"></ol><p class="empty" id="le" hidden>Nothing here yet.</p></div></section>
-  </div>
-  <p class="foot" id="foot"></p>
+  <a class="rolink" href="/">What is Orbit?</a>
+</div></div>
+
+<main class="board" id="board" hidden>
+  <section class="stage" aria-label="Circle orbit">
+    <div class="orbit" id="orbit">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <circle class="ring2" cx="50" cy="50" r="42"/>
+        <circle class="ring" cx="50" cy="50" r="34"/>
+        <g id="chords"></g>
+      </svg>
+      <div class="core" aria-hidden="true"><script>document.write(O.mark('100%'))</script></div>
+      <div id="nodes"></div>
+      <div id="packets" aria-hidden="true"></div>
+    </div>
+    <p class="legend"><span><i style="border-color:var(--green)"></i>Locked in</span><span><i style="border-color:var(--blue);border-style:dashed"></i>Negotiating</span><span><i style="border-color:var(--amber)"></i>Moved</span></p>
+    <div class="banner" id="banner" role="status" hidden></div>
+  </section>
+
+  <aside class="side">
+    <section class="plans" aria-label="Plans">
+      <header>Plans <span id="pn"></span></header>
+      <div class="scroll" id="plans"></div>
+    </section>
+    <section class="logs" aria-label="Agent log">
+      <header>Agent log <span id="ln"></span></header>
+      <div class="scroll"><ol class="log" id="log"></ol><p class="empty" id="le" hidden>No agent activity yet.</p></div>
+    </section>
+  </aside>
 </main>
-<script>
-(function(){
-var $=function(s){return document.querySelector(s)};
-var q=new URLSearchParams(location.search),code=(q.get('c')||'').toUpperCase(),v=q.get('v')||'';
-var k=new URLSearchParams(location.hash.replace(/^#/,'')).get('k')||'';
-if(O.mock&&!code){code='DEMO42';v='mock'}
-var BUSY={light:['green','Light week'],busy:['amber','Busy'],packed:['red','Packed']};
-function fd(d){var m=/^(\d{4})-(\d\d)-(\d\d)$/.exec(d||'');if(!m)return d;return new Date(+m[1],+m[2]-1,+m[3]).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}
-function ft(t){var m=/^(\d\d):(\d\d)$/.exec(t||'');if(!m)return t;var h=+m[1];return (h%12||12)+':'+m[2]+' '+(h<12?'AM':'PM')}
-function msg(t){var m=$('#msg');m.textContent=t;m.hidden=!t}
-function st(p){var s=(p.status||'').toLowerCase(),r=p.round||1;
-  if(/accept|lock|confirm/.test(s))return['green','Locked in'];
-  if(/expir/.test(s))return['grey','Expired'];
-  if(/declin/.test(s))return['red','No shared time'];
-  if(r>1)return['amber','Moving (round '+r+')'];return['blue','Proposed']}
-function norm(d){ // legacy /log shape -> board shape
-  if(d.plans)return d;
-  return{name:d.name,members:(d.members||[]).map(function(m){return typeof m==='string'?{name:m}:m}),plans:[],log:d.entries||[],stats:null}}
-function render(b){
-  b=norm(b);document.title=b.name+' · Orbit board';$('#title').textContent=b.name;
-  $('#mc').textContent='Auto-refreshes every 5 s';
-  $('#grid').hidden=false;msg('');
-  var ms=b.members||[];$('#mn').textContent=ms.length+(ms.length===1?' person':' people');
-  $('#members').innerHTML=ms.map(function(m){var bz=BUSY[m.busy];return '<div class="mem"><span class="av">'+O.esc((m.name||'?').charAt(0).toUpperCase())+'</span><b>'+O.esc(m.name)+'</b>'+(bz?'<span class="chip '+bz[0]+'"><i></i>'+bz[1]+'</span>':'<small>No signal</small>')+'</div>'}).join('')||'<p class="empty">No members yet.</p>';
-  var ps=b.plans||[];
-  $('#plans').innerHTML=ps.map(function(p){var s=st(p),to=(p.to_names||[]).join(', ');
-    return '<div class="plan"><div class="r"><b>'+O.esc((p.kind==='study'?'Study ':'')+(p.course||'Plan'))+'</b><span class="chip '+s[0]+'"><i></i>'+s[1]+'</span></div><p>'+O.esc(p.from_name||'')+(to?' with '+O.esc(to):'')+'</p>'+((p.date||p.time)?'<div class="when">'+O.esc([fd(p.date),ft(p.time)].filter(Boolean).join(' · '))+'</div>':'')+'</div>'}).join('')||'<p class="empty">No plans yet.</p>';
-  if(b.stats){$('#kpis').hidden=false;$('#k1').textContent=b.stats.proposals||0;$('#k2').textContent=b.stats.locked||0;$('#k3').textContent=b.stats.agent_moves||0}
-  var lg=b.log||[];var ol=$('#log');var fresh=!ol.children.length;var prev=render.seen||(render.seen={});
-  ol.textContent='';lg.forEach(function(e){var key=(e.ts||'')+e.text;ol.appendChild(O.logItem(e,!fresh&&!prev[key]));prev[key]=1});
-  $('#le').hidden=lg.length>0;$('#ln').textContent=lg.length+' entries';
-  $('#foot').innerHTML='<span class="live"></span>Updated '+new Date().toLocaleTimeString()}
-function fail(e){if(e&&e.status===404||e&&e.status===401||e&&e.status===403){$('#grid').hidden=true;msg('This link isn’t valid or has expired. Ask the circle’s owner for a fresh view-only link.')}
-  else if(!$('#grid').hidden){$('#foot').textContent='Can’t reach the server. Retrying…'}else msg('Can’t reach the server. Retrying…')}
-function load(){
-  if(!code||(!v&&!k)){msg('This link is missing its circle code or key. Ask your Cubbie for the circle’s view-only link.');return Promise.resolve()}
-  var p=v?O.api('/circles/'+encodeURIComponent(code)+'/board?v='+encodeURIComponent(v)):O.api('/circles/'+encodeURIComponent(code)+'/board',{headers:{Authorization:'Bearer '+k}});
-  return p.then(render).catch(fail)}
-load();setInterval(function(){if(!document.hidden)load()},5000);
-})();
-</script>
+
+<section class="state" id="state" hidden></section>
+
+<script src="/circle.js"></script>
 </body>
 </html>

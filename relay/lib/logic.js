@@ -44,6 +44,7 @@ export function prettyWindow(token) {
 }
 export const CANON_TIME = { morning: '10:00', afternoon: '14:00', evening: '19:00' };
 export const MAX_ROUNDS = 4;
+export const MAX_RESCHEDULES = 2;
 export function canonTime(token) {
   return CANON_TIME[token.split('-')[1]];
 }
@@ -129,6 +130,16 @@ export function sanitizeSignal(body) {
     for (const w of f) if (typeof w !== 'string' || !WINDOW_RE.test(w)) throw new InputError(`free windows must look like "thu-evening" (got ${JSON.stringify(String(w)).slice(0, 30)}).`);
     out.free = [...new Set(f)];
   }
+  if (body.prefers !== undefined) {
+    const p = arr(body.prefers, 3, 'prefers');
+    for (const x of p) if (!PARTS.includes(x)) throw new InputError('prefers must list morning, afternoon or evening.');
+    out.prefers = [...new Set(p)];
+  }
+  if (body.avoid_days !== undefined) {
+    const d = arr(body.avoid_days, 7, 'avoid_days');
+    for (const x of d) if (!DAYS.includes(x)) throw new InputError('avoid_days must list days like mon, tue, ... sun.');
+    out.avoid_days = [...new Set(d)];
+  }
   if (body.courses !== undefined) {
     const seen = new Map();
     arr(body.courses, 10, 'courses').forEach((c, i) => {
@@ -189,7 +200,38 @@ export function sanitizeProposalInput(body, selfId) {
     p.time = body.time;
   }
   p.note = optStr(body.note, 80, 'note');
+  p.places = sanitizePlaces(body.places);
   return p;
+}
+
+// ---------- places ----------
+export function sanitizePlaces(v) {
+  if (v === undefined || v === null || v === '') return [];
+  const out = [];
+  arr(v, 3, 'places').forEach((x, i) => {
+    const s = cleanStr(x, 40, `places[${i}]`);
+    if (s && !out.includes(s)) out.push(s);
+  });
+  return out;
+}
+export function sanitizePlace(v, field) {
+  return cleanStr(v, 40, field, { required: true });
+}
+/** The place a plan locks with: most-voted answer (ties go to the earliest vote), else a previously set place, else the first option. */
+export function pickPlace(p) {
+  const votes = Object.values(p.place_votes || {}).filter(Boolean);
+  if (votes.length) {
+    const n = new Map();
+    for (const v of votes) n.set(v, (n.get(v) || 0) + 1);
+    let best = votes[0];
+    for (const [v, c] of n) if (c > n.get(best)) best = v;
+    return best;
+  }
+  return p.place || (p.places && p.places[0]) || null;
+}
+/** One hour before the plan, as a local (no zone) ISO timestamp such as 2026-10-29T18:00:00. */
+export function remindAt(date, time) {
+  return new Date(new Date(`${date}T${time}:00Z`).getTime() - 3600000).toISOString().slice(0, 19);
 }
 
 // ---------- windows ----------
@@ -210,6 +252,66 @@ export function nextBestWindow(sigs, { declined, today, beforeDate }) {
     if (before) return before;
   }
   return common[0];
+}
+
+// ---------- ranking + reasons ----------
+const PART_PLURAL = { morning: 'mornings', afternoon: 'afternoons', evening: 'evenings' };
+export function joinNames(names) {
+  return names.length <= 1 ? names[0] || '' : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+const partOf = (w) => w.split('-')[1];
+const dayOf = (w) => w.split('-')[0];
+function dayLabel(iso, today) {
+  const off = (Date.parse(iso) - Date.parse(today)) / DAY_MS;
+  return off >= 0 && off < 7 ? DAY_NAMES[dow(iso)] : prettyDate(iso);
+}
+/** Earliest exam/quiz/deadline on or after `today` for `course` across the given signals. */
+export function findDeadline(sigs, course, today) {
+  if (!course) return null;
+  const evs = sigs.filter(Boolean).flatMap((s) => (s.courses || []).filter((c) => c.code === course).flatMap((c) => c.events || []))
+    .filter((e) => e.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  return evs.length ? { course, kind: evs[0].kind, date: evs[0].date } : null;
+}
+/**
+ * Short human reasons why `w` suits `people` ([{name, sig}]; sig may be missing). `note` (e.g. "Tue evening busy for Manas")
+ * goes after the free-for line; `soonest` adds the earliest-slot reason.
+ */
+export function explainWindow(people, w, { today, course, note, soonest } = {}) {
+  const r = [];
+  const dl = findDeadline(people.map((p) => p.sig), course, today);
+  if (dl && windowDate(w, today) < dl.date) r.push(`before ${dl.course} ${dl.kind} ${dayLabel(dl.date, today)}`);
+  const free = people.filter((p) => p.sig && Array.isArray(p.sig.free) && p.sig.free.includes(w)).map((p) => p.name);
+  if (free.length) r.push(`free for ${joinNames(free)}`);
+  if (note) r.push(note);
+  const pref = people.filter((p) => p.sig && (p.sig.prefers || []).includes(partOf(w))).map((p) => p.name);
+  if (pref.length === 1) r.push(`matches ${pref[0]}'s preferred ${PART_PLURAL[partOf(w)]}`);
+  else if (pref.length > 1) r.push(`matches preferred ${PART_PLURAL[partOf(w)]} for ${joinNames(pref)}`);
+  const avoiders = people.filter((p) => p.sig && (p.sig.avoid_days || []).length).map((p) => p.name);
+  if (avoiders.length && !people.some((p) => p.sig && (p.sig.avoid_days || []).includes(dayOf(w)))) {
+    r.push(`avoids ${avoiders.length > 1 ? 'no-go days' : 'a no-go day'} for ${joinNames(avoiders)}`);
+  }
+  if (soonest) r.push('soonest shared time');
+  return r.slice(0, 5).map((x) => x.slice(0, 80));
+}
+/**
+ * Windows free for everyone, best first: before the shared deadline, matching more preferences, avoiding avoid_days, then sooner.
+ * people: [{name, sig}]. Returns [{window, reasons}] (empty when anyone has no free list).
+ */
+export function rankWindows(people, { today, course, exclude = [], limit = 5 }) {
+  const sigs = people.map((p) => p.sig);
+  const common = commonWindows(sigs, today, exclude);
+  if (!common.length) return [];
+  const dl = findDeadline(sigs, course, today);
+  const score = (w) => ({
+    before: dl && windowDate(w, today) < dl.date ? 0 : 1,
+    pref: -people.filter((p) => (p.sig.prefers || []).includes(partOf(w))).length,
+    avoid: people.filter((p) => (p.sig.avoid_days || []).includes(dayOf(w))).length,
+    key: windowKey(w, today),
+  });
+  const cmp = (a, b) => { const x = score(a); const y = score(b); return x.before - y.before || x.pref - y.pref || x.avoid - y.avoid || x.key - y.key; };
+  const ranked = [...common].sort(cmp);
+  const soonest = common[0]; // commonWindows is already chronological
+  return ranked.slice(0, limit).map((w) => ({ window: w, reasons: explainWindow(people, w, { today, course, soonest: common.length > 1 && w === soonest }) }));
 }
 
 // ---------- privacy filter ----------

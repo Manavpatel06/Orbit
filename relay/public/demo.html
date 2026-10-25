@@ -81,6 +81,18 @@ body{background:radial-gradient(70% 50% at 50% 0,rgba(11,132,254,.10),transparen
  .links a:not(.btn){display:none}
  .node{width:46px;height:46px;margin-top:-23px}.node img{width:38px;height:38px}
 }
+.whyc{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:5px;font-size:13.5px;color:#c7c7cc;max-width:560px;text-align:left}
+.whyc li{position:relative;padding-left:15px}
+.whyc li::before{content:"";position:absolute;left:2px;top:.6em;width:5px;height:5px;border-radius:50%;background:var(--blue)}
+.whycard{align-self:flex-start;width:90%;border:1px solid var(--line2);background:var(--s3);border-radius:4.4cqw;padding:3.2cqw 3.6cqw;font-size:3.2cqw;line-height:1.4;color:#c7c7cc;margin-top:.6cqw}
+.whycard b{display:block;color:#fff;font-weight:600;font-size:3.4cqw;margin-bottom:1.4cqw}
+.whycard li{position:relative;padding-left:3.2cqw;margin-top:1cqw}
+.whycard li::before{content:"";position:absolute;left:.4cqw;top:.7em;width:1.4cqw;height:1.4cqw;border-radius:50%;background:var(--blue)}
+.reschc{align-self:center;width:90%;border:1px solid rgba(191,90,242,.45);background:linear-gradient(160deg,rgba(191,90,242,.16),rgba(191,90,242,.03));border-radius:5cqw;padding:3.4cqw 4cqw;display:flex;gap:3.2cqw;align-items:center;margin-top:1cqw}
+.reschc svg{flex:none;width:9cqw;height:9cqw;color:var(--violet2)}
+.reschc b{display:block;font-size:4.1cqw;color:#fff;letter-spacing:-.02em}
+.reschc span{display:block;color:#d1d1d6;font-size:3.3cqw;margin-top:.4cqw}
+.chg{margin-left:0}
 </style>
 </head>
 <body>
@@ -103,7 +115,7 @@ body{background:radial-gradient(70% 50% at 50% 0,rgba(11,132,254,.10),transparen
       <div class="relay"></div>
       <div class="node r" id="nR"><img src="/cubbie.png" alt=""></div>
     </div></div>
-    <div class="status" id="status"><span class="chip grey" id="who"><i></i>Idle</span><p class="idle" id="stx">Two Cubbies, two students, one study session to schedule. Press start and watch the agents handle it.</p></div>
+    <div class="status" id="status"><span class="chip grey" id="who"><i></i>Idle</span><span class="chip amber hide chg" id="chg"><i></i>Calendar changed</span><p class="idle" id="stx">Two Cubbies, two students, one study session to schedule. Press start and watch the agents handle it.</p></div>
     <div class="ctrl ctrlwrap" id="ctrl">
       <div class="prog" id="prog" aria-hidden="true"></div>
       <div class="row"><button class="btn pri lg" id="go" type="button">Start live demo</button><button class="btn lg hide" id="replay" type="button"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 0 2-4.5M4 3.5v3.2h3.2"/></svg>Replay</button></div>
@@ -136,6 +148,7 @@ var NAMES={left:'Manav',right:'Manas'};
 function stamp(){[thL,thR].forEach(function(t){t.innerHTML='<div class="stamp">Today 9:41 AM</div>'})}
 stamp();
 var run=0,sid=null,code=null,view=null,total=10,seen={};
+var WHY=document.createElement('ul');WHY.id='why';WHY.className='whyc hide';$('#stx').after(WHY);
 var mobile=function(){return matchMedia('(max-width:1100px)').matches};
 
 /* lanes */
@@ -158,7 +171,7 @@ function add(side,text,from,extra){var t=TH[side],d=document.createElement('div'
   if(extra){var n=document.createElement('div');n.className='note';n.textContent=extra;t.appendChild(n)}return d}
 function typing(side){var t=TH[side],d=document.createElement('div');d.className='b in pop typing';d.innerHTML='<i></i><i></i><i></i>';t.appendChild(d);return d}
 function lock(side,plan){var text='';var d=document.createElement('div');d.className='lockc pop';
-  d.innerHTML=CAL+'<div><b>Locked in</b><span>'+O.esc((plan&&plan.title)||'Study session')+'</span><span>'+O.esc([plan&&plan.date,plan&&plan.time].filter(Boolean).join(' · ')||text||'')+'</span><small><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>Added to your calendar</small></div>';
+  d.innerHTML=CAL+'<div><b>Locked in</b><span>'+O.esc((plan&&plan.title)||'Study session')+'</span><span>'+O.esc([plan&&plan.date,plan&&plan.time,plan&&plan.place].filter(Boolean).join(' · ')||text||'')+'</span><small><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>Added to your calendar</small></div>';
   TH[side].appendChild(d)}
 function act(side){['left','right'].forEach(function(s){PH[s].classList.toggle('act',s===side||side==='both')})}
 function cap(side,text,hot){CAP[side].textContent=text;CAP[side].classList.toggle('hot',!!hot)}
@@ -183,11 +196,20 @@ function label(s){var t=(s.text||'').toLowerCase();if(/busy|moved/.test(t))retur
 function dirOf(s){var t=(s.text||'').toLowerCase();if(/received|inbox/.test(t))return'lr';if(s.actor==='manas_cubbie'||s.actor==='manas')return'rl';return'lr'}
 function scrollTo(side){if(!mobile())return;PH[side].scrollIntoView({behavior:O.reduced?'auto':'smooth',block:'center'})}
 
-function lockInfo(t){var l=String(t).split('\n')[0].replace(/^Locked in:\s*/i,'').split(' \u00B7 ');return{title:l[0]||'Study session',date:l[1],time:l[2]}}
+function lockInfo(t){var l=String(t).split('\n')[0].replace(/^Locked in:\s*/i,'').split(' \u00B7 ');return{title:l[0]||'Study session',date:l[1],time:l[2],place:l[3]}}
+function showChg(on){var c=$('#chg');if(c)c.classList.toggle('hide',!on);if(!on)showWhy(null)}
+function showWhy(list){var w=$('#why');if(!w)return;w.innerHTML=(list&&list.length)?list.slice(0,3).map(function(r){return'<li>'+O.esc(r)+'</li>'}).join(''):'';w.classList.toggle('hide',!(list&&list.length))}
+function reasonsCard(side,list){if(!list||!list.length)return;var d=document.createElement('div');d.className='whycard pop';
+  d.innerHTML='<b>Why this time</b><ul style="list-style:none;padding:0;margin:0">'+list.slice(0,4).map(function(r){return'<li>'+O.esc(r)+'</li>'}).join('')+'</ul>';TH[side].appendChild(d)}
+function isResched(s){return!!(s.reschedule||s.beat==='reschedule'||/calendar changed|new conflict/i.test(s.text||''))}
+function reschedCard(side,text){var d=document.createElement('div');d.className='reschc pop';
+  d.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/></svg><div><b>Calendar changed</b><span>'+O.esc(text)+'</span></div>';TH[side].appendChild(d)}
 async function play(s,my){
   prog(s.step);who(s.actor);var other={left:'right',right:'left'};
   var bubbles=s.bubbles&&s.bubbles.length?s.bubbles:[].concat(s.bubble||[]);
   $('#stx').className='';$('#stx').textContent=s.text||(bubbles[0]&&bubbles[0].text)||'';
+  var rs=s.reasons||(s.plan&&s.plan.reasons);if(!bubbles.length)showWhy(rs);else showWhy(null);
+  if(isResched(s)){showChg(true);act('none');cap('right','Manas’s calendar changed. Cubbie found a new time, and Manav has to confirm again.',1);cap('left','Manav’s Cubbie is waiting for a yes.',0);await packet('rl','Calendar changed');if(my!==run)return;await O.sleep(250)}
   if(!bubbles.length){
     act('none');var d=dirOf(s),a=d==='lr'?'left':'right',b=other[a];
     cap(a,s.text,1);cap(b,'Not interrupted. The agents are handling this.',0);
@@ -199,14 +221,14 @@ async function play(s,my){
     act(side);scrollTo(side);
     if(bb.from==='cubbie'){var last=i===bubbles.length-1,note=last&&s.note?s.note:null;
       cap(side,note?'Cubbie drafts the text. '+NAMES[side]+' sends it himself.':'Cubbie asks '+NAMES[side]+' once, at the right moment.',1);cap(other[side],NAMES[other[side]]+' isn’t interrupted.',0);
-      var ty=typing(side);await O.sleep(O.reduced?100:650);if(my!==run)return;ty.remove();add(side,bb.text,'cubbie',note)}
+      var ty=typing(side);await O.sleep(O.reduced?100:650);if(my!==run)return;ty.remove();add(side,bb.text,'cubbie',note);if(rs&&i===bubbles.length-1&&!/^Locked in/i.test(bb.text))reasonsCard(side,rs)}
     else{cap(side,NAMES[side]+' answers.',1);add(side,bb.text,'student')}
     if(i<bubbles.length-1)await O.sleep(350)}
   if(my!==run)return;await board()}
 async function start(){
   var my=++run;showErr('');$('#go').disabled=true;$('#go').textContent='Starting…';
   ['#log'].forEach(function(s){$(s).textContent=''});seen={};$('#logempty').classList.remove('hide');$('#logn').textContent='Live from the relay';
-  stamp();act('none');cap('left','Connecting to the Orbit server…',0);cap('right','Connecting to the Orbit server…',0);
+  showChg(false);stamp();act('none');cap('left','Connecting to the Orbit server…',0);cap('right','Connecting to the Orbit server…',0);
   var d;try{d=await O.api('/demo/start',{method:'POST'})}catch(e){if(my!==run)return;showErr(errMsg(e));$('#go').disabled=false;$('#go').textContent='Start live demo';cap('left','Waiting for the demo to start.',0);cap('right','Waiting for the demo to start.',0);return}
   if(my!==run)return;sid=d.demo_id;code=d.code;view=d.view_v;total=d.steps_total||10;prog(0);
   $('#go').classList.add('hide');$('#replay').classList.add('hide');$('#go').disabled=false;$('#go').textContent='Start live demo';

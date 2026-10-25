@@ -29,6 +29,7 @@ Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a priva
 10. Auto-reschedule. If a calendar changes after a plan is locked, that Cubbie notices, the relay finds the next common time, and the others confirm once (max 2 reschedules).
 11. Reminders and cheers. "Lock it in and remind you an hour before?" A check-on text you send counts as a cheer on the board (count only, never the message).
 12. Live circle board. Watchable circles stream every agent step live at /circle?c=CODE (names, plans, reasons and the agent log; never free times or courses).
+13. Music. Only if you say yes: send a Spotify link and Cubbie shares what you're playing with your circle for 30 min. When a friend is playing an artist you like and you're both free, Cubbie asks "Jam session?". Study and jam plans can carry a public Spotify playlist. Your tastes are never shown to friends.
 
 ## Install
 
@@ -96,6 +97,10 @@ Your Cubbie  --Skill + orbit.py-->  Relay (Vercel + MongoDB)  <--  Friend's Cubb
  you send the texts                                           friend sends the texts
 ```
 
+## Roadmap
+
+- Automatic now-playing: connect a Spotify account so Cubbie can see what you're playing without you sending a link.
+
 ## Repo layout
 
 ```
@@ -111,8 +116,8 @@ tests/            relay tests (in-memory MongoDB) and client tests (stub server)
 ## Run the tests
 
 ```bash
-cd relay && npm ci && cd ../tests/relay && npm ci && npm test   # 262 relay checks on an in-memory MongoDB
-bash tests/client/run.sh                                        # 115 client checks against a local stub server
+cd relay && npm ci && cd ../tests/relay && npm ci && npm test   # 344 relay checks on an in-memory MongoDB
+bash tests/client/run.sh                                        # 164 client checks against a local stub server
 ```
 
 ## Self-hosting the relay

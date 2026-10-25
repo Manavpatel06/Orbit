@@ -27,7 +27,12 @@
      "windows": ["fri-afternoon"], "time": "14:00", "date": "2026-10-30", "round": 1,
      "note": null, "status": "accepted", "from_id": "d4e5f6a7", "from_name": "Reya",
      "to_ids": ["a1b2c3d4"], "to_names": ["Manav"], "my_response": "yes",
-     "created_at": "2026-10-23T16:00:00Z"}
+     "created_at": "2026-10-23T16:00:00Z"},
+    {"id": "6a6a6a6a", "kind": "jam", "course": null, "window": "tue-evening", "windows": ["tue-evening"],
+     "time": "19:00", "date": "2026-10-27", "round": 1, "note": null, "status": "accepted",
+     "from_id": "a1b2c3d4", "from_name": "Manav", "to_ids": ["b2c3d4e5"], "to_names": ["Manas"], "my_response": "yes",
+     "playlist": {"url": "https://open.spotify.com/playlist/37i9dQZF1DX2Nc3B70tvx0", "name": "Indie's Top 50"},
+     "created_at": "2026-10-23T20:00:00Z"}
   ],
   "suggestions": [
     {"type": "check_on", "friend_id": "b2c3d4e5", "friend_name": "Manas", "text": "Manas has a big day tomorrow."},
@@ -35,7 +40,8 @@
      "event": {"kind": "quiz", "title": "Quiz 5", "date": "2026-10-30"}, "window": "thu-evening",
      "help_topic": "attention",
      "text": "You and Reya both have CSE 576 (Quiz 5, Fri). Both free Thu evening. Reya can help with attention."},
-    {"type": "celebrate", "friend_id": "c3d4e5f6", "friend_name": "Mansi", "text": "Mansi finished their capstone demo. Worth a congrats."}
+    {"type": "celebrate", "friend_id": "c3d4e5f6", "friend_name": "Mansi", "text": "Mansi finished their capstone demo. Worth a congrats."},
+    {"type": "jam", "friend_id": "b2c3d4e5", "friend_name": "Manas", "artist": "Arctic Monkeys", "track": "Do I Wanna Know?", "url": "https://open.spotify.com/track/5FVd6KXrgO9B3JPmC8OPst", "genre": null, "window": "sat-evening", "match": "artist", "text": "Manas is playing Arctic Monkeys right now, one of your favorites. You're both free this evening. Jam session?"}
   ],
   "members": [
     {"member_id": "a1b2c3d4", "name": "Manav", "paused": false, "has_signal": true, "updated_at": "2026-10-24T07:30:00Z"},
@@ -59,7 +65,8 @@
        "from_name": "Manav", "to_names": ["Mansi"], "moved_by_name": "Mansi"}
     ],
     "new_nudges": [
-      {"type": "check_on", "friend_id": "b2c3d4e5", "friend_name": "Manas", "text": "Manas has a big day tomorrow."}
+      {"type": "check_on", "friend_id": "b2c3d4e5", "friend_name": "Manas", "text": "Manas has a big day tomorrow."},
+      {"type": "jam", "friend_id": "b2c3d4e5", "friend_name": "Manas", "artist": "Arctic Monkeys", "track": "Do I Wanna Know?", "url": "https://open.spotify.com/track/5FVd6KXrgO9B3JPmC8OPst", "genre": null, "window": "sat-evening", "match": "artist", "text": "Manas is playing Arctic Monkeys right now, one of your favorites. You're both free this evening. Jam session?"}
     ],
     "now": "2026-10-24T12:00:00Z"
   },

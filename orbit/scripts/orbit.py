@@ -28,13 +28,17 @@ DEFAULT_SERVER = "https://orbit-cubbie.vercel.app"
 SAMPLE = Path(__file__).resolve().parent.parent / "assets" / "sample_feed.json"
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PARTS = ["morning", "afternoon", "evening"]
-CONSENT_KEYS = ["busy", "big_days", "free", "courses", "help", "wins"]
+CONSENT_KEYS = ["busy", "big_days", "free", "courses", "help", "wins", "music"]
 MAX_WINDOWS = 5        # windows per proposal, ranked best first
 MAX_PLACES = 3         # places per proposal
 MAX_PLACE_LEN = 40
 MAX_SHOWN = 5          # suggestions printed per feed
 MAX_WAITING = 3        # proposals waiting on the student printed per feed
 MAX_ACCEPTED = 2       # accepted plans printed per feed
+MAX_ARTISTS = 15       # music tastes shared per circle
+MAX_GENRES = 8
+SPOTIFY_NOW_RE = re.compile(r"https://open\.spotify\.com/(?:intl-[a-z]{2}/)?(track|album|playlist|artist|episode|show)/[A-Za-z0-9]{1,64}(?:[?#]\S*)?")
+SPOTIFY_PLAYLIST_RE = re.compile(r"https://open\.spotify\.com/(?:intl-[a-z]{2}/)?(playlist|album|track)/[A-Za-z0-9]{1,64}(?:[?#]\S*)?")
 SEEN_DAYS = 7          # a shown item stays hidden from --new-only and inbox for this long
 CALENDAR_DAYS = 30     # mark-added remembers a plan for this long
 MAX_SEEN = 500
@@ -213,6 +217,8 @@ def what_text(p: dict) -> str:
         return f"Study {p['course']}" if p.get("course") else "Study session"
     if p.get("kind") == "hangout":
         return "Hangout"
+    if p.get("kind") == "jam":
+        return "Jam session"
     return "Plan"
 
 
@@ -221,13 +227,17 @@ def ask_text(p: dict) -> str:
         return f"study {p['course']}" if p.get("course") else "study"
     if p.get("kind") == "hangout":
         return "hang out"
+    if p.get("kind") == "jam":
+        return "jam"
     return "make a plan"
 
 
 def place_text(p: dict) -> str:
-    """' · Hayden Library' for the set place, or ' · A or B' for the options still open. Empty when none."""
+    """' · Hayden Library' for the set place (or ' · A or B' for open options), then ' · 🎧 Deep Focus' for a playlist. Empty when none."""
     place = p.get("place") or " or ".join(p.get("places") or [])
-    return f" · {place}" if place else ""
+    pl = p.get("playlist") if isinstance(p.get("playlist"), dict) else {}
+    parts = [x for x in (place, f"🎧 {pl['name']}" if pl.get("name") else "") if x]
+    return "".join(f" · {x}" for x in parts)
 
 
 def remind_text(p: dict) -> str:
@@ -320,7 +330,9 @@ def remember_windows(st: dict, proposals: list) -> None:
 
 def suggestion_key(s: dict) -> str:
     ev = s.get("event") or {}
-    parts = (s.get("type"), s.get("friend_id"), s.get("course"), s.get("window"), ev.get("date") or s.get("date"))
+    parts = [s.get("type"), s.get("friend_id"), s.get("course"), s.get("window"), ev.get("date") or s.get("date")]
+    if s.get("type") == "jam":  # a new song from the same friend is a new nudge
+        parts += [s.get("artist"), s.get("track")]
     return "|".join(str(x or "") for x in parts)
 
 
@@ -345,6 +357,46 @@ def stale_calendar(st: dict, pid) -> None:
     added = st.get("calendar_added") or {}
     if pid and pid in added:
         st.setdefault("calendar_stale", {})[pid] = added.pop(pid)
+
+
+def check_hhmm(raw: str | None, flag: str = "--now") -> str:
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", raw or ""):
+        fail(f"bad {flag} '{raw}': use HH:MM (24h), e.g. 19:00.", 6)
+    return raw
+
+
+def check_url(raw: str, pattern, flag: str) -> str:
+    url = (raw or "").strip()
+    if not pattern.fullmatch(url):
+        fail(f"bad {flag} '{url[:40]}': use a Spotify link like https://open.spotify.com/track/<id>.", 6)
+    return url
+
+
+def taste_items(raw: str | None, max_items: int, max_len: int, flag: str) -> list[str]:
+    """--artists "A|B": up to max_items names of max_len characters each; repeats dropped."""
+    out: list[str] = []
+    for item in (raw or "").split("|"):
+        item = " ".join(item.split())
+        if not item:
+            continue
+        if len(item) > max_len:
+            fail(f"{flag} item '{item[:20]}...' is too long (max {max_len} characters).", 6)
+        if item.lower() not in [x.lower() for x in out]:
+            out.append(item)
+    if len(out) > max_items:
+        fail(f"at most {max_items} items for {flag}.", 6)
+    return out
+
+
+def clear_music(st: dict) -> list[str]:
+    """Turning music off also deletes the tastes kept on the server. Returns the circles it could not reach."""
+    failed = []
+    for code, circ in (st.get("circles") or {}).items():
+        try:
+            http("POST", server_url(st), f"/circles/{code}/music", {"on": False}, token=circ["token"])
+        except SystemExit:
+            failed.append(code)
+    return failed
 
 
 # ---------- sample mode ----------
@@ -571,21 +623,27 @@ def cmd_create_join(args, st: dict) -> None:
 
 def cmd_consent(args, st: dict) -> None:
     flags = {"busy": args.busy, "big_days": args.big_days, "free": args.free,
-             "courses": args.courses, "help": args.help, "wins": args.wins}
+             "courses": args.courses, "help": args.help, "wins": args.wins, "music": args.music}
     given = {k: v for k, v in flags.items() if v is not None}
+    failed: list[str] = []
     if given:
         cur = st.get("consent") or {k: False for k in CONSENT_KEYS}
         for k, v in given.items():
             cur[k] = yesno(v, "--" + k.replace("_", "-"))
         st["consent"] = cur
         save_state(st)
+        if "music" in given and not cur.get("music"):
+            failed = clear_music(st)
     cur = st.get("consent")
     if args.json:
-        emit({"consent": cur})
-    elif cur is None:
+        emit({"consent": cur, **({"music_not_cleared": failed} if failed else {})})
+        return
+    if cur is None:
         print("No consent saved yet (nothing is shared). Set it with consent --busy yes --free yes ...")
     else:
         print(("Consent saved: " if given else "Consent: ") + consent_line(cur))
+    if failed:
+        print("Could not delete your music from the server yet. Run consent --music no again when you are online.")
 
 
 def cmd_share(args, st: dict) -> None:
@@ -652,6 +710,10 @@ def cmd_share(args, st: dict) -> None:
         wanted["want_help"] = ("help", parse_help(args.want_help, "--want-help"))
     if args.win:
         wanted["wins"] = ("wins", [w.strip() for w in args.win if w.strip()])
+    if args.artists is not None or args.genres is not None:
+        artists = taste_items(args.artists, MAX_ARTISTS, 40, "--artists")
+        genres = taste_items(args.genres, MAX_GENRES, 24, "--genres")
+        wanted["music"] = ("music", {"artists": artists, "genres": genres} if (artists or genres) else None)
     if not wanted:
         fail("nothing to share: pass at least one of --busy, --big-days, --free, --courses-file, "
              "--prefers, --avoid-days, --can-help, --want-help, --win.", 6)
@@ -681,7 +743,10 @@ def get_members(st: dict, code: str, circ: dict) -> dict:
 def cmd_feed(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
     today = parse_today(args.today)
-    feed = http("GET", server_url(st), f"/circles/{code}/feed", token=circ["token"], query={"today": today.isoformat()})
+    query = {"today": today.isoformat()}
+    if args.now:
+        query["now"] = check_hhmm(args.now)
+    feed = http("GET", server_url(st), f"/circles/{code}/feed", token=circ["token"], query=query)
     count = len(feed.get("friends") or [])
     if not args.json:
         try:
@@ -697,8 +762,10 @@ def cmd_inbox(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
     today = parse_today(args.today)
     since = ((st.get("last_inbox") or {}).get(code)) or ts_str(now_utc() - DEFAULT_LOOKBACK)
-    res = http("GET", server_url(st), f"/circles/{code}/inbox", token=circ["token"],
-               query={"since": since, "today": today.isoformat()})
+    query = {"since": since, "today": today.isoformat()}
+    if args.now:
+        query["now"] = check_hhmm(args.now)
+    res = http("GET", server_url(st), f"/circles/{code}/inbox", token=circ["token"], query=query)
     if args.json:
         emit(res)
     else:
@@ -743,6 +810,21 @@ def parse_places(raw: str | None) -> list[str]:
     return out
 
 
+def parse_playlist(url: str | None, name: str | None) -> dict | None:
+    """--playlist-url (a Spotify playlist, album or track) with an optional --playlist-name (max 60 characters)."""
+    if url is None:
+        if name is not None:
+            fail("--playlist-name needs --playlist-url.", 6)
+        return None
+    out = {"url": check_url(url, SPOTIFY_PLAYLIST_RE, "--playlist-url")}
+    clean = " ".join((name or "").split())
+    if len(clean) > 60:
+        fail("--playlist-name is too long (max 60 characters).", 6)
+    if clean:
+        out["name"] = clean
+    return out
+
+
 def resolve_targets(members: list, me_id: str, targets: list[str]) -> list[str]:
     others = [m for m in members if m["member_id"] != me_id]
     ids = []
@@ -764,8 +846,10 @@ def resolve_targets(members: list, me_id: str, targets: list[str]) -> list[str]:
 
 def cmd_propose(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
-    if args.kind not in ("study", "hangout"):
-        fail(f"bad --kind '{args.kind}': use study or hangout.", 6)
+    if args.kind not in ("study", "hangout", "jam"):
+        fail(f"bad --kind '{args.kind}': use study, hangout or jam.", 6)
+    if args.kind == "jam" and args.course:
+        fail("a jam session has no course: drop --course.", 6)
     windows: list[str] = []
     for tok in csv(args.windows):
         w = check_window(tok)
@@ -782,12 +866,15 @@ def cmd_propose(args, st: dict) -> None:
         except (ValueError, AssertionError):
             fail(f"bad --time '{args.time}': use HH:MM, e.g. 19:00.", 6)
     places = parse_places(args.places)
+    playlist = parse_playlist(args.playlist_url, args.playlist_name)
     today = parse_today(args.today)
     members = get_members(st, code, circ).get("members", [])
     to = resolve_targets(members, circ["member_id"], args.to)
     body = {"to": to, "kind": args.kind, "windows": windows, "today": today.isoformat()}
     if places:
         body["places"] = places
+    if playlist:
+        body["playlist"] = playlist
     if args.course:
         body["course"] = args.course.strip()
     if args.time:
@@ -806,6 +893,8 @@ def cmd_propose(args, st: dict) -> None:
         msg += f" Backups: {', '.join(pretty_window(w) for w in windows[1:])}."
     if places:
         msg += f" Places: {' or '.join(places)}."
+    if isinstance(p.get("playlist"), dict) and p["playlist"].get("name"):
+        msg += f" Playlist: {p['playlist']['name']}."
     why = reason_text(p).strip()
     if why:
         msg += f" Why: {why[1:-1]}."
@@ -824,6 +913,11 @@ def cmd_respond(args, st: dict) -> None:
         body["free_windows"] = [check_window(t) for t in csv(args.free)]
     elif args.free is not None:
         fail("--free only goes with --answer busy.", 6)
+    playlist = parse_playlist(args.playlist_url, args.playlist_name)
+    if playlist:
+        if ans != "yes":
+            fail("--playlist-url only goes with --answer yes.", 6)
+        body["playlist"] = playlist
     if args.place is not None or args.place_suggest is not None:
         if ans != "yes":
             fail("--place and --place-suggest only go with --answer yes.", 6)
@@ -949,6 +1043,66 @@ def cmd_plans(args, st: dict) -> None:
         print(f"Locked: {what_text(p)} · {when_text(p)}{place_text(p)}{remind_text(p)} {id_tag(st, p.get('id'))}")
 
 
+def cmd_playing(args, st: dict) -> None:
+    """What the student's Cubbie is playing, shared with the circle for 30 minutes. Needs music consent."""
+    code, circ = pick_circle(st, args.circle)
+    if args.clear:
+        if args.artist or args.track or args.genre or args.url:
+            fail("--clear goes on its own.", 6)
+        res = http("DELETE", server_url(st), f"/circles/{code}/now-playing", token=circ["token"])
+        if args.json:
+            emit(res)
+        else:
+            print("Stopped sharing what you're playing.")
+        return
+    artist = " ".join((args.artist or "").split())
+    if not artist:
+        fail('playing needs --artist "<artist>" (or --clear).', 6)
+    if len(artist) > 40:
+        fail("--artist is too long (max 40 characters).", 6)
+    track = " ".join((args.track or "").split()) or None
+    if track and len(track) > 60:
+        fail("--track is too long (max 60 characters).", 6)
+    genre = " ".join((args.genre or "").split()) or None
+    if genre and len(genre) > 24:
+        fail("--genre is too long (max 24 characters).", 6)
+    url = check_url(args.url, SPOTIFY_NOW_RE, "--url") if args.url else None
+    if not (st.get("consent") or {}).get("music"):
+        fail("music sharing is off: run consent --music yes first.", 6)
+    body: dict = {"artist": artist, "consent": True}
+    if track:
+        body["track"] = track
+    if genre:
+        body["genre"] = genre
+    if url:
+        body["url"] = url
+    res = http("POST", server_url(st), f"/circles/{code}/now-playing", body, token=circ["token"])
+    if args.json:
+        emit(res)
+    else:
+        print("Shared with your circle for 30 min 🎧")
+
+
+def cmd_vibe(args, st: dict) -> None:
+    """Shared genres and artists with friends only, plus a mood for a playlist search. Never the rest of anyone's taste."""
+    code, circ = pick_circle(st, args.circle)
+    kind = (args.kind or "study").strip().lower()
+    if kind not in ("study", "jam"):
+        fail(f"bad --kind '{args.kind}': use study or jam.", 6)
+    targets = [t for chunk in args.with_ for t in csv(chunk)]
+    if not targets:
+        fail("--with needs at least one friend's name.", 6)
+    members = get_members(st, code, circ).get("members", [])
+    ids = resolve_targets(members, circ["member_id"], targets)
+    res = http("GET", server_url(st), f"/circles/{code}/vibe", token=circ["token"], query={"with": ",".join(ids), "kind": kind})
+    if args.json:
+        emit(res)
+        return
+    print(f"Mood: {res.get('mood') or 'focus'}")
+    print("Shared genres: " + (", ".join(res.get("genres") or []) or "none"))
+    print("Shared artists: " + (", ".join(res.get("artists") or []) or "none"))
+
+
 def cmd_members(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
     info = get_members(st, code, circ)
@@ -1049,8 +1203,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--code")
     s.add_argument("--me")
     s = add("consent", add_help=False)  # --help here means the help-consent flag
-    for k in ("busy", "big-days", "free", "courses", "help", "wins"):
-        s.add_argument("--" + k)
+    for k in ("busy", "big-days", "free", "courses", "help", "wins", "music"):
+        s.add_argument("--" + k, help="yes or no" if k == "music" else None)
     s = add("share")
     s.add_argument("--today")
     s.add_argument("--busy")
@@ -1063,12 +1217,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--can-help", action="append")
     s.add_argument("--want-help", action="append")
     s.add_argument("--win", action="append")
+    s.add_argument("--artists", help='music artists you like, separated by | (needs music consent)')
+    s.add_argument("--genres", help='music genres you like, separated by | (needs music consent)')
     s = add("feed")
     s.add_argument("--today")
+    s.add_argument("--now", help="your local time, HH:MM, to pick the window for a jam nudge (default: now)")
     s.add_argument("--new-only", action="store_true",
                    help="hide suggestions and requests already shown; print nothing when there is nothing new")
     s = add("inbox")
     s.add_argument("--today")
+    s.add_argument("--now", help="your local time, HH:MM (default: now)")
     s = add("mark-added")
     s.add_argument("--id", required=True)
     s = add("propose")
@@ -1080,6 +1238,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--time")
     s.add_argument("--note")
     s.add_argument("--places", help='up to 3 places separated by |, e.g. "Hayden Library 2nd floor|Zoom"')
+    s.add_argument("--playlist-url", help="a Spotify playlist, album or track link for the plan")
+    s.add_argument("--playlist-name", help="what the playlist is called, e.g. \"Indie jam mix\" (max 60)")
     s.add_argument("--today")
     s = add("respond")
     s.add_argument("--id", required=True)
@@ -1087,11 +1247,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--free", help="with busy: your student's current free windows, comma separated")
     s.add_argument("--place", type=int, help="with yes: number (from 0) of the proposed place the student picked")
     s.add_argument("--place-suggest", help="with yes: a different place the student suggests")
+    s.add_argument("--playlist-url", help="with yes: a Spotify playlist link (kept only if the plan has none yet)")
+    s.add_argument("--playlist-name", help="with yes: the playlist's name")
     s.add_argument("--today")
     s = add("conflict")
     s.add_argument("--id", required=True)
     s.add_argument("--free", help="the student's current free windows, comma separated (\"\" for none)")
     s.add_argument("--today")
+    s = add("playing")
+    s.add_argument("--artist")
+    s.add_argument("--track")
+    s.add_argument("--genre")
+    s.add_argument("--url", help="a Spotify link for the track, album, playlist or artist")
+    s.add_argument("--clear", action="store_true", help="stop sharing what you are playing")
+    s = add("vibe")
+    s.add_argument("--with", dest="with_", action="append", required=True, help="friend names, comma separated or repeated")
+    s.add_argument("--kind", help="study (default) or jam")
     s = add("cheered")
     s.add_argument("--friend", required=True)
     s = add("public")
@@ -1128,6 +1299,7 @@ def main() -> None:
         {"share": cmd_share, "feed": cmd_feed, "inbox": cmd_inbox, "mark-added": cmd_mark_added,
          "propose": cmd_propose, "respond": cmd_respond, "conflict": cmd_conflict, "cheered": cmd_cheered,
          "public": cmd_public, "suggest": cmd_suggest, "plans": cmd_plans, "members": cmd_members, "log": cmd_log,
+         "playing": cmd_playing, "vibe": cmd_vibe,
          "log-link": cmd_log_link, "pause": cmd_toggle, "resume": cmd_toggle, "leave": cmd_leave,
          "status": cmd_status}[c](args, st)
 

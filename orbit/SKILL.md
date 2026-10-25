@@ -29,6 +29,7 @@ What can be shared, each only if the student says yes:
 - course codes with exam, quiz and deadline dates. Friends only see courses they also take
 - topics the student can help with or wants help with
 - short wins the student wants to share
+- music: the artists and genres they like, and what they are playing (only if they say yes; see Music)
 
 ## Setup
 
@@ -49,7 +50,8 @@ If `python3 scripts/orbit.py status` exits with 2, the student is not in a circl
    - "Can I share your course codes and exam dates, only with friends in the same class? yes?"
    - "Can I share topics you've asked me for help with, so a friend in the class can help? no?" (default no)
    - "Can I share small wins, like submitting a big project? yes?"
-   Save the answers with `python3 scripts/orbit.py consent --busy yes --big-days yes --free yes --courses yes --help no --wins yes`, using the student's real answers.
+   - "Can I share the artists and genres you like with your circle, and what you're playing when you send me a song? yes?"
+   Save the answers with `python3 scripts/orbit.py consent --busy yes --big-days yes --free yes --courses yes --help no --wins yes --music yes`, using the student's real answers.
 6. Connections. If the student said yes to something that needs Google Calendar, Gmail or Canvas and that account is not connected, ask them to connect it (one line, e.g. "Connect Google Calendar in Cubbie so I can see when you're free."). Do not ask them to type the information instead.
 7. Offer scheduled check-ins, one yes/no each:
    - "Want me to refresh your circle twice a day, 8:30 am and 6 pm? yes?"
@@ -73,8 +75,9 @@ Sharing is automatic. Never ask the student questions here and never ask them fo
 7. Wins (only if consented): a big project, exam or application the student submitted or finished in the last 2 days (from Canvas submissions or email), as a short phrase like `--win "submitted the CSE 576 project"`. If there are none, leave it out. Do not ask.
 8. Preferences (only if the student agreed to share free windows, and only when the calendar shows a clear pattern): the parts of the day they usually keep free, like evening, as `--prefers evening`, and weekdays they usually keep clear of plans, like Friday, as `--avoid-days fri`. These help Orbit pick better times and are never shown to friends. Work them out from the last few weeks of the calendar. Do not ask.
 9. Always pass the student's local date as `--today YYYY-MM-DD`.
+10. Music (only if the student said yes to music): the artists and genres they listen to, from what they told you and the songs they sent, as `--artists "Arctic Monkeys|Phoebe Bridgers" --genres "indie rock|lo-fi"` (at most 15 artists and 8 genres). Never ask for them. Orbit shows these to no one, it only uses them to match.
 
-Run: `python3 scripts/orbit.py share --today <date> --busy <level> --big-days <dates> --free <tokens> --prefers <parts> --avoid-days <days> --courses-file <path> ...`
+Run: `python3 scripts/orbit.py share --today <date> --busy <level> --big-days <dates> --free <tokens> --prefers <parts> --avoid-days <days> --courses-file <path> --artists "<a>|<b>" --genres "<x>|<y>" ...`
 
 Delete the temp courses file afterwards. During a scheduled check-in, share silently; when the student asked, say one line: "Updated what your circle sees."
 
@@ -82,9 +85,11 @@ Delete the temp courses file afterwards. During a scheduled check-in, share sile
 
 Run `python3 scripts/orbit.py feed --today <date>`. It prints suggestions and any open proposals waiting on the student.
 
-Pick at most 2 nudges, highest value first: a proposal waiting on the student, then a check-on, then a study match (one with a help match first), then celebrate, then hangout. Skip hangout nudges when the student's own busy level is packed. If nothing is useful, say nothing in a scheduled check-in, and say "All quiet in your circle" if the student asked.
+Pick at most 2 nudges, highest value first: a proposal waiting on the student, then a check-on, then a jam nudge, then a study match (one with a help match first), then celebrate, then hangout. Skip hangout nudges when the student's own busy level is packed. If nothing is useful, say nothing in a scheduled check-in, and say "All quiet in your circle" if the student asked.
 
-In a scheduled check-in, run `feed --new-only` instead. It prints only what has not been shown before, and nothing at all when there is nothing new.
+Pass `--now HH:MM` with the student's local time so jam windows match their day (for example `feed --now 19:30 --today <date>`).
+
+In a scheduled check-in, run `feed --new-only --now <HH:MM>` instead. It prints only what has not been shown before, and nothing at all when there is nothing new.
 
 ## Proposing
 
@@ -102,6 +107,15 @@ For "find a time for all of us", propose to several friends at once with repeate
 - The plan locks when all of them say yes.
 - If someone has not answered after 24 hours and at least one friend said yes, the plan is set for the rest. If nobody said yes it expires. Tell the student in one line when either happens.
 
+## Music
+
+Only when the student said yes to music. If they said no, never mention or run any of this.
+
+- Sharing a song: when the student sends a Spotify link or says what they are listening to, get the artist and track from the link page with web search, and never guess. If the link already gives them, do not ask the student to type them. Then run `python3 scripts/orbit.py playing --artist "<artist>" --track "<track>" --url "<link>"` silently (leave out what you do not know), and reply with one line: "Shared with your circle for 30 min 🎧". Stop with `playing --clear` when the student asks.
+- Jam nudges: a line from `feed` or `inbox` such as "Manas is playing Arctic Monkeys right now, one of your favorites. You're both free this evening. Jam session?" is a yes or no question. Ask it as written. After yes, check the student's Google Calendar for that window, as Answering requests step 1 does. If it is free, find a public Spotify playlist that fits, as in Study playlists, then run `python3 scripts/orbit.py propose --to "<name>" --kind jam --windows <window> --playlist-url "<link>" --playlist-name "<name>" --today <date>`, leave out the playlist flags if you found none, and say "Asked. I will tell you when they answer." After no, say nothing.
+- Study playlists: before proposing a study or jam plan, run `python3 scripts/orbit.py vibe --with "<name>" --kind study` (or `--kind jam`). It prints the genres and artists the student and friend share, and a mood (focus, chill or upbeat). Only when there is a shared mood, search the web for a public Spotify playlist for that mood (for example "lo-fi focus playlist spotify"), and attach it with `--playlist-url` and `--playlist-name` on the propose command. Ask once inside the existing proposal question: "...I'll add a lo-fi focus playlist. yes?" Use only open.spotify.com playlist, album or track links that you found on the web.
+- Never say what a friend listens to, except inside a jam nudge or a Locked in line. Never list anyone's tastes. Turning music off: run `python3 scripts/orbit.py consent --music no`, which also removes the copy on the server.
+
 ## Answering requests
 
 A line "Needs you: ... (id X)" from `inbox` or `feed` is a request from a friend. It shows the day, time, place options and the top reason, for example "Needs you: Manav wants to study CSE 576 · Thu Oct 29 · 7:00 PM · Hayden Library 2nd floor or Zoom (before your quiz Fri) (id X)". Handle it in this order, without asking the student anything you can check yourself.
@@ -116,7 +130,7 @@ A line "Needs you: ... (id X)" from `inbox` or `feed` is a request from a friend
 
 Lines from `inbox` and `feed` that start with "Locked in:" or "Update:" are plan news. Handle them like this.
 
-- "Locked in: ... (id X)": add the plan to the student's Google Calendar once, using the date, time and place on the line, then run `python3 scripts/orbit.py mark-added --id X`. Text one line, such as "Locked in: Study CSE 576 with Manas, Thu 7 PM at Hayden Library." Leave out the friend's name if the line does not give it. After a yes that returned "Locked in:", use the id you answered.
+- "Locked in: ... (id X)": add the plan to the student's Google Calendar once, using the date, time, place and playlist on the line (add the playlist name to the event notes), then run `python3 scripts/orbit.py mark-added --id X`. Text one line, such as "Locked in: Study CSE 576 with Manas, Thu 7 PM at Hayden Library." Leave out the friend's name if the line does not give it. After a yes that returned "Locked in:", use the id you answered.
 - Reminder: the line ends with "remind 6:00 PM" before the id. Set ONE Cubbie reminder at that time ("Study CSE 576 with Manas at Hayden Library in 1 hour"), but only if the student said yes to the reminder when they locked or proposed it. If you do not know, skip the reminder and do not ask again.
 - "(id X, move the old calendar entry)": this plan was on the calendar at an earlier time. Move that calendar event and its reminder to the new time instead of adding a second one, run `mark-added --id X`, and text one line: "Moved: Study CSE 576 with Manas is now Sat 2 PM."
 - If the line says "(id X, already on your calendar)", do not add it again and do not text it again.

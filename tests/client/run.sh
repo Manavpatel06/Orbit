@@ -168,6 +168,57 @@ file  "share body has prefers" '"prefers": \["evening", "morning"\]' "$LAST"
 check "share bad prefers" 6 "bad --prefers" "${O[@]}" share --today 2026-10-26 --prefers night
 check "share bad avoid-days" 6 "bad --avoid-days" "${O[@]}" share --today 2026-10-26 --avoid-days funday
 
+echo "== v5: music, now-playing, jam nudges, playlists, vibe =="
+check "music off turns the server copy off too" 0 "Consent saved: .*music no" "${O[@]}" consent --music no
+file  "music off sends /music on:false" '"on": false' "$LAST"
+check "share keeps music out while consent is no" 0 "Withheld \(no consent\): music" "${O[@]}" share --today 2026-10-26 --artists "Arctic Monkeys|Radiohead" --genres "indie rock"
+nope  "share never echoes tastes" "Radiohead|Arctic Monkeys" "${O[@]}" share --today 2026-10-26 --artists "Arctic Monkeys|Radiohead"
+check "music yes" 0 "Consent saved: .*music yes" "${O[@]}" consent --music yes
+check "share sends tastes once consented" 0 "Shared: music" "${O[@]}" share --today 2026-10-26 --artists "Arctic Monkeys|the Strokes|arctic monkeys" --genres "indie rock|lo-fi"
+file  "share body has deduped tastes" '"music": \{"artists": \["Arctic Monkeys", "the Strokes"\], "genres": \["indie rock", "lo-fi"\]\}' "$LAST"
+check "too many artists" 6 "at most 15 items" "${O[@]}" share --today 2026-10-26 --artists "$(for i in $(seq 1 16); do printf 'band%s|' $i; done)"
+check "artist name too long" 6 "too long" "${O[@]}" share --today 2026-10-26 --artists "$(printf 'x%.0s' $(seq 1 41))"
+check "playing needs an artist" 6 "needs --artist" "${O[@]}" playing
+check "playing shares now" 0 "^Shared with your circle for 30 min 🎧$" "${O[@]}" playing --artist "Arctic Monkeys" --track "Do I Wanna Know?" --url "https://open.spotify.com/track/7abcXYZ?si=abc"
+file  "playing sends the track and consent" '"consent": true, "track": "Do I Wanna Know\?"' "$LAST"
+file  "playing sends the spotify url" '"url": "https://open.spotify.com/track/7abcXYZ\?si=abc"' "$LAST"
+check "playing rejects other sites" 6 "bad --url" "${O[@]}" playing --artist X --url "https://evil.com/open.spotify.com/track/abc"
+check "playing rejects http" 6 "bad --url" "${O[@]}" playing --artist X --url "http://open.spotify.com/track/abc"
+check "playing rejects user pages" 6 "bad --url" "${O[@]}" playing --artist X --url "https://open.spotify.com/user/abc"
+check "playing genre too long" 6 "too long" "${O[@]}" playing --artist X --genre "$(printf 'g%.0s' $(seq 1 25))"
+check "playing clear" 0 "^Stopped sharing what you're playing\.$" "${O[@]}" playing --clear
+file  "playing clear sends DELETE" '"m": "DELETE"' "$LAST"
+check "playing clear goes on its own" 6 "goes on its own" "${O[@]}" playing --clear --artist X
+check "music off blocks playing" 0 "Consent saved: .*music no" "${O[@]}" consent --music no
+check "playing refused without music consent" 6 "music sharing is off" "${O[@]}" playing --artist "Arctic Monkeys"
+check "music yes again" 0 "Consent saved: .*music yes" "${O[@]}" consent --music yes
+check "vibe with a friend (jam)" 0 "^Mood: upbeat$" "${O[@]}" vibe --with manas --kind jam
+check "vibe lists only what both share" 0 "^Shared genres: indie rock$" "${O[@]}" vibe --with manas --kind jam
+check "vibe study defaults to focus" 0 "^Mood: focus$" "${O[@]}" vibe --with manas
+check "vibe friend without consent is empty" 0 "^Shared genres: none$" "${O[@]}" vibe --with manasi
+check "vibe json" 0 '"mood"' "${O[@]}" vibe --with manas --json
+check "vibe bad kind" 6 "bad --kind" "${O[@]}" vibe --with manas --kind party
+check "vibe needs --with" 6 "required" "${O[@]}" vibe
+check "propose a jam with a playlist" 0 "^Proposed Jam session to Manas: .* \(id deadbeef\)\. Playlist: Indie jam mix\.$" "${O[@]}" propose --to manas --kind jam --windows thu-evening --playlist-url "https://open.spotify.com/playlist/37i9dQZF1DX8" --playlist-name "Indie jam mix" --today 2026-10-24
+file  "jam proposal body" '"kind": "jam"' "$LAST"
+file  "jam proposal sends the playlist" '"playlist": \{"url": "https://open.spotify.com/playlist/37i9dQZF1DX8", "name": "Indie jam mix"\}' "$LAST"
+check "a jam has no course" 6 "no course" "${O[@]}" propose --to manas --kind jam --course "CSE 576" --windows thu-evening
+check "playlist must be a Spotify playlist" 6 "bad --playlist-url" "${O[@]}" propose --to manas --kind jam --windows thu-evening --playlist-url "https://open.spotify.com/artist/abc"
+check "playlist name needs a url" 6 "needs --playlist-url" "${O[@]}" propose --to manas --kind jam --windows thu-evening --playlist-name "Indie"
+check "kind list includes jam" 6 "study, hangout or jam" "${O[@]}" propose --to manas --kind party --windows thu-evening
+check "yes can carry a playlist" 0 "Locked in: " "${O[@]}" respond --id 3fa2c1d9 --answer yes --playlist-url "https://open.spotify.com/playlist/37i9dQZF1DX8" --playlist-name "Indie jam mix" --today 2026-10-24
+file  "respond sends the playlist" '"playlist": \{"url": "https://open.spotify.com/playlist/37i9dQZF1DX8", "name": "Indie jam mix"\}' "$LAST"
+check "playlist only with yes" 6 "only goes with --answer yes" "${O[@]}" respond --id 3fa2c1d9 --answer no --playlist-url "https://open.spotify.com/playlist/37i9dQZF1DX8"
+check "feed --now (json, so the last request is the feed)" 0 '"suggestions"' "${O[@]}" feed --now 19:00 --today 2026-10-24 --json
+file  "feed sends the local time" "feed\?today=2026-10-24&now=19%3A00" "$LAST"
+check "bad --now" 6 "bad --now" "${O[@]}" feed --now 25:00 --today 2026-10-24
+check "inbox --now" 0 "" "${O[@]}" inbox --now 19:00 --today 2026-10-24
+file  "inbox sends the local time" "inbox\?since=.*now=19%3A00" "$LAST"
+check "sample feed shows the jam nudge" 0 "^- Manas is playing Arctic Monkeys right now, one of your favorites\. You're both free this evening\. Jam session\?$" "${O[@]}" --sample feed
+check "sample feed shows a locked jam with its playlist" 0 "^Locked in: Jam session · Tue Oct 27 · 7:00 PM · 🎧 Indie's Top 50 \(id 6a6a6a6a\)$" "${O[@]}" --sample feed
+check "sample inbox shows the jam nudge" 0 "Jam session\?" "${O[@]}" --sample inbox
+nope  "no taste strings in any output" "Radiohead|the Strokes" cat "$OUTLOG"
+
 echo "== v1 state compatibility =="
 V1=$(mktemp -d); mkdir -p "$V1/.config/orbit"
 cat > "$V1/.config/orbit/state.json" <<'J'

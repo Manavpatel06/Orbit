@@ -46,7 +46,20 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"code": "ABC234", "name": "Night Owls", "members": MEM,
                                    "view_url": "https://orbit-cubbie.vercel.app/circle?c=ABC234&v=0123456789abcdef01234567"})
         if p.endswith("/signal"):
-            return self.send(200, {"ok": True, "updated_at": "now"})
+            return self.send(200, {"ok": True, "updated_at": "now", "music": bool(b.get("music"))})
+        if p.endswith("/music"):  # v5: consent on/off (off also clears tastes server side)
+            return self.send(200, {"ok": True, "music_consent": b["on"]})
+        if p.endswith("/now-playing") and m == "POST":  # v5: 30 minutes of now-playing
+            return self.send(200, {"ok": True, "now_playing": {"artist": b["artist"], "track": b.get("track"), "genre": b.get("genre"),
+                                                                 "url": b.get("url"), "until": "2026-10-24T12:30:00Z"}})
+        if p.endswith("/now-playing") and m == "DELETE":
+            return self.send(200, {"ok": True, "cleared": True})
+        if p.endswith("/vibe"):  # v5: shared items only; Manasi has no music consent in this stub
+            kind = q.get("kind", ["study"])[0]
+            if "b2c3d4ff" in q.get("with", [""])[0]:
+                return self.send(200, {"kind": kind, "genres": [], "artists": [], "mood": "upbeat" if kind == "jam" else "focus"})
+            return self.send(200, {"kind": kind, "genres": ["indie rock"], "artists": ["Arctic Monkeys"],
+                                   "mood": "upbeat" if kind == "jam" else "focus"})
         if p.endswith("/feed"):
             return self.send(200, {k: sample[k] for k in ("me", "friends", "proposals", "suggestions")})
         if p.endswith("/inbox"):
@@ -88,10 +101,10 @@ class H(BaseHTTPRequestHandler):
             if b.get("places"):
                 return self.send(200, {"id": "deadbeef", "status": "open", "kind": b["kind"], "course": b.get("course"),
                                        "window": w[0], "windows": w, "time": "19:00", "date": "2026-10-29", "round": 1,
-                                       "to_ids": b["to"], "places": b["places"], "reasons": ["before CSE 576 quiz Fri"]})
+                                       "to_ids": b["to"], "places": b["places"], "reasons": ["before CSE 576 quiz Fri"], "playlist": b.get("playlist")})
             return self.send(200, {"id": "deadbeef", "status": "open", "kind": b["kind"], "course": b.get("course"),
                                    "window": w[0], "windows": w, "time": b.get("time") or "19:00",
-                                   "date": "2026-10-29", "round": 1, "to_ids": b["to"]})
+                                   "date": "2026-10-29", "round": 1, "to_ids": b["to"], "playlist": b.get("playlist")})
         if p.endswith("/respond"):
             a = b["answer"]
             pid = p.split("/")[-2]
@@ -131,6 +144,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         self.handle_any("PUT")
+
+    def do_DELETE(self):
+        self.handle_any("DELETE")
 
 
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()

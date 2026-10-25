@@ -119,6 +119,19 @@ footer nav{display:flex;gap:22px}footer a{text-decoration:none}footer a:hover{co
 .wturn{margin-top:28px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;color:var(--mu);font-size:15.5px}
 .wturn b{color:var(--tx);font-weight:560}
 @media (max-width:620px){.wsplit{grid-template-columns:1fr}.wsplit>div{padding:26px 22px}.wsplit>div+div{border-left:0;border-top:1px solid var(--line)}.cin{max-width:none;width:100%}.watch .btn{width:100%}}
+.mus{margin-top:56px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid var(--line);border-radius:28px;background:var(--s2);overflow:hidden}
+.mus>div{padding:34px 34px 30px}
+.mus>div+div{border-left:1px solid var(--line);background:radial-gradient(90% 120% at 100% 0,rgba(100,210,255,.09),transparent 70%)}
+.mus h3{font-size:clamp(24px,2.6vw,30px);font-weight:660;letter-spacing:-.035em;line-height:1.1;text-wrap:balance}
+.mus>div>p{margin-top:12px;color:var(--mu);font-size:15.5px;line-height:1.5;max-width:30em}
+.mus .ex{display:flex;flex-direction:column;gap:8px;height:100%;justify-content:center;font-size:14.5px}
+.mus .ex .b{max-width:86%}
+.plc{align-self:flex-start;display:inline-flex;align-items:center;gap:9px;margin-top:6px;height:34px;padding:0 14px 0 11px;border-radius:999px;border:1px solid rgba(100,210,255,.4);background:rgba(100,210,255,.1);color:#d6f4ff;font-size:13.5px;font-weight:580}
+.plc svg{color:var(--music);flex:none}
+.pvl{grid-column:1/-1;display:flex;gap:12px;align-items:center;padding:18px 34px;border-top:1px solid var(--line);color:var(--mu);font-size:14.5px;line-height:1.45}
+.pvl svg{flex:none;color:var(--green)}
+@media (max-width:980px){.mus{grid-template-columns:1fr}.mus>div+div{border-left:0;border-top:1px solid var(--line)}}
+@media (max-width:620px){.mus>div{padding:26px 22px}.pvl{padding:16px 22px}}
 </style>
 </head>
 <body>
@@ -171,6 +184,24 @@ footer nav{display:flex;gap:22px}footer a{text-decoration:none}footer a:hover{co
     <div class="step"><span class="n">3</span><h3>You confirm once</h3><p>Your friend’s Cubbie checks their calendar first. They get one question, and both calendars get the same event.</p>
       <div class="mini"><div class="b in">Manav wants to study CSE 576 Thu 7 PM. You’re free then. Lock it in?</div><div class="b out">yes</div>
       <div class="lk"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#30d158" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4"/></svg><span><b>Locked in</b><small>Study CSE 576 · Thu · 7:00 PM</small></span></div></div></div>
+  </div>
+</div></section>
+
+<section class="s" id="music"><div class="wrap">
+  <div class="mus">
+    <div>
+      <h3>Music brings people together</h3>
+      <p>When a friend is playing something you both like, Cubbie checks whether you’re free and suggests a jam session. Study sessions can come with a focus playlist.</p>
+      <span class="plc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Lo-fi study focus</span>
+    </div>
+    <div>
+      <div class="ex" aria-hidden="true">
+        <div class="b in">Manav is playing Arctic Monkeys right now, one of your favorites. You’re both free this evening. Jam session?</div>
+        <div class="b out">yes</div>
+        <div class="b in">Locked in: Jam session · today · 7:00 PM · Manav’s place</div>
+      </div>
+    </div>
+    <p class="pvl"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg>Your tastes are only used for matching. Friends see a song only while you share it, for 30 minutes.</p>
   </div>
 </div></section>
 

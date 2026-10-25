@@ -61,7 +61,7 @@ export function prettyTime(hhmm) {
 }
 
 // ---------- strings ----------
-function cleanStr(v, max, field, { required = false } = {}) {
+export function cleanStr(v, max, field, { required = false } = {}) {
   if (typeof v !== 'string') {
     if (required) throw new InputError(`${field} is required.`);
     throw new InputError(`${field} must be a string.`);
@@ -163,7 +163,86 @@ export function sanitizeSignal(body) {
   if (body.wins !== undefined) {
     out.wins = arr(body.wins, 3, 'wins').map((w, i) => cleanStr(w, 80, `wins[${i}]`, { required: true }));
   }
+  if (body.music !== undefined) out.music = sanitizeMusic(body.music);
   return out;
+}
+
+// ---------- music (v5): tastes only feed matching; now-playing is shared with the circle ----------
+export const TASTE_LIMITS = { artists: { max: 15, len: 40 }, genres: { max: 8, len: 24 } };
+export const SPOTIFY_NOW = 'track|album|playlist|artist|episode|show';
+export const SPOTIFY_PLAYLIST = 'playlist|album|track';
+export const JAM_GAP_MS = 6 * 3600 * 1000;
+const PART_WORD = { morning: 'this morning', afternoon: 'this afternoon', evening: 'this evening' };
+/** Mood hints from shared genres (normalized). The first shared genre with a hint wins. */
+const MOOD_HINTS = {
+  focus: ['lo-fi', 'lofi', 'ambient', 'classical', 'instrumental', 'piano', 'focus'],
+  chill: ['chill', 'acoustic', 'bossa nova', 'folk', 'indie folk', 'jazz', 'soul', 'r&b'],
+  upbeat: ['pop', 'dance', 'edm', 'house', 'hip hop', 'rap', 'punk', 'funk', 'disco', 'rock', 'metal', 'latin'],
+};
+
+/** Matching key: lowercase, trimmed, single spaces, leading "the " dropped. */
+export function normTaste(s) {
+  return String(s || '').toLowerCase().trim().replace(/\s+/g, ' ').replace(/^the /, '');
+}
+function tasteList(v, { max, len }, field) {
+  if (v === undefined || v === null) return [];
+  const seen = new Map();
+  arr(v, max, field).forEach((x, i) => {
+    const s = cleanStr(x, len, `${field}[${i}]`, { required: true });
+    if (!seen.has(normTaste(s))) seen.set(normTaste(s), s);
+  });
+  return [...seen.values()];
+}
+/** null clears the stored tastes; otherwise {artists, genres} (either list may be empty). */
+export function sanitizeMusic(v) {
+  if (v === null) return null;
+  if (!isObj(v)) throw new InputError('music must be an object with artists and genres lists, or null.');
+  return { artists: tasteList(v.artists, TASTE_LIMITS.artists, 'music.artists'), genres: tasteList(v.genres, TASTE_LIMITS.genres, 'music.genres') };
+}
+/** Only https://open.spotify.com/<kind>/<id> links (optional intl- segment and ?query dropped). Returns the canonical link. */
+export function spotifyUrl(v, kinds, field) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  const m = s.length <= 200 ? new RegExp(`^https://open\\.spotify\\.com/(?:intl-[a-z]{2}/)?(${kinds})/([A-Za-z0-9]{1,64})(?:[?#]\\S*)?$`).exec(s) : null;
+  if (!m) throw new InputError(`${field} must be a Spotify link like https://open.spotify.com/${kinds.split('|')[0]}/<id>.`);
+  return `https://open.spotify.com/${m[1]}/${m[2]}`;
+}
+/** A now-playing post. `consent: true` grants music consent in the same call. */
+export function sanitizeNowPlaying(body) {
+  if (!isObj(body)) throw new InputError('Body must be a JSON object.');
+  if (body.consent !== undefined && typeof body.consent !== 'boolean') throw new InputError('consent must be true or false.');
+  const artist = cleanStr(body.artist, 40, 'artist', { required: true });
+  const track = optStr(body.track, 60, 'track') || null;
+  const genre = optStr(body.genre, 24, 'genre') || null;
+  const url = body.url === undefined || body.url === null || body.url === '' ? null : spotifyUrl(body.url, SPOTIFY_NOW, 'url');
+  return { artist, track, genre, url, consent: body.consent === true };
+}
+/** A playlist for a plan: {url, name?} -> {url, name} (name defaults to "Playlist"). */
+export function sanitizePlaylist(v) {
+  if (v === undefined || v === null || v === '') return null;
+  if (!isObj(v)) throw new InputError('playlist must be an object like {"url": "https://open.spotify.com/playlist/<id>"}.');
+  const url = spotifyUrl(v.url, SPOTIFY_PLAYLIST, 'playlist.url');
+  return { url, name: optStr(v.name, 60, 'playlist.name') || 'Playlist' };
+}
+/** Items present in every list (matched with normTaste), shown in the first list's wording. */
+export function sharedItems(lists, max = 5) {
+  const keyed = lists.map((l) => new Set(l.map(normTaste)));
+  const out = [];
+  for (const item of lists[0] || []) {
+    const k = normTaste(item);
+    if (keyed.every((s) => s.has(k)) && !out.some((x) => normTaste(x) === k)) out.push(item);
+  }
+  return out.slice(0, max);
+}
+export function moodFor(kind, sharedGenres) {
+  for (const g of sharedGenres) {
+    for (const [mood, words] of Object.entries(MOOD_HINTS)) if (words.includes(normTaste(g))) return mood;
+  }
+  return kind === 'jam' ? 'upbeat' : 'focus';
+}
+/** Time of day for a HH:MM clock time: morning before 12, afternoon before 18, else evening. */
+export function partAt(hhmm) {
+  const h = Number(String(hhmm).slice(0, 2));
+  return h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
 }
 
 export function isLive(sig, now = new Date()) {
@@ -184,7 +263,7 @@ export function sanitizeProposalInput(body, selfId) {
   for (const t of to) if (typeof t !== 'string' || !/^[0-9a-f]{8}$/.test(t)) throw new InputError('to must be a list of member_ids.');
   const ids = [...new Set(to)];
   if (ids.includes(selfId)) throw new InputError('You cannot propose to yourself.');
-  if (body.kind !== 'study' && body.kind !== 'hangout') throw new InputError('kind must be study or hangout.');
+  if (!['study', 'hangout', 'jam'].includes(body.kind)) throw new InputError('kind must be study, hangout or jam.');
   let windows;
   if (body.windows !== undefined && body.windows !== null) {
     windows = windowList(body.windows, 5, 'windows');
@@ -194,13 +273,15 @@ export function sanitizeProposalInput(body, selfId) {
     windows = [body.window];
   }
   const p = { to: ids, kind: body.kind, window: windows[0], windows };
-  if (body.course !== undefined && body.course !== null && body.course !== '') p.course = needCourse(body.course, 'course');
+  // a jam session has no course
+  if (body.course !== undefined && body.course !== null && body.course !== '' && body.kind !== 'jam') p.course = needCourse(body.course, 'course');
   if (body.time !== undefined && body.time !== null && body.time !== '') {
     if (typeof body.time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(body.time)) throw new InputError('time must be HH:MM (24h).');
     p.time = body.time;
   }
   p.note = optStr(body.note, 80, 'note');
   p.places = sanitizePlaces(body.places);
+  p.playlist = sanitizePlaylist(body.playlist);
   return p;
 }
 
@@ -346,13 +427,17 @@ export function friendView(mySig, friend, sig) {
  * entries: [{member, signal}] for visible friends (unpaused, live signal).
  * proposals: all circle proposals (any status). Returns max 5, priority ordered.
  */
-export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, today, limit = 5 }) {
+export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, today, limit = 5, now = new Date(), nowHHMM = '12:00', music = null }) {
   const mySig = mySigIn || {};
   const tomorrow = addDays(today, 1);
   const horizon = addDays(today, 7);
-  const out = { check_on: [], study_match: [], help_match: [], celebrate: [], hangout: [] };
+  const out = { check_on: [], jam: [], study_match: [], help_match: [], celebrate: [], hangout: [] };
   const helpCovered = new Set();
   const cutoff = addDays(today, -7);
+  // music: my tastes as sets (only when I consent), and each friend's active now-playing (consent, not expired)
+  const tastes = music && music.tastes ? { artists: new Set(music.tastes.artists.map(normTaste)), genres: new Set(music.tastes.genres.map(normTaste)) } : null;
+  const jamRecent = (friendId) => proposals.some((p) => p.kind === 'jam' && [p.from_id, ...p.to_ids].includes(meId) && [p.from_id, ...p.to_ids].includes(friendId)
+    && now - new Date(p.created_at) <= JAM_GAP_MS);
   const myCourses = new Map(((mySig && mySig.courses) || []).map((c) => [c.code, c]));
   // no repeats: skip (friend, kind, course) pairs that already have an open/accepted proposal from the last 7 days
   const iso10 = (d) => String(d instanceof Date ? d.toISOString() : d).slice(0, 10);
@@ -370,6 +455,22 @@ export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, tod
 
     const view = friendView(mySig, member, signal);
     const common = commonWindows([mySig, signal], today);
+
+    // 1b. jam: a friend is playing something from my tastes, and we are both free the rest of today
+    const np = tastes && music.playing ? music.playing.get(member.member_id) : null;
+    if (np && !jamRecent(member.member_id)) {
+      const artistHit = tastes.artists.has(normTaste(np.artist));
+      const genreHit = !artistHit && !!np.genre && tastes.genres.has(normTaste(np.genre));
+      const todayTok = DAYS[dow(today)];
+      const part = PARTS.slice(PARTS.indexOf(partAt(nowHHMM))).find((pt) => common.includes(`${todayTok}-${pt}`));
+      if ((artistHit || genreHit) && part) {
+        out.jam.push({
+          type: 'jam', ...base, artist: np.artist, track: np.track || null, url: np.url || null, genre: np.genre || null,
+          window: `${todayTok}-${part}`, match: artistHit ? 'artist' : 'genre',
+          text: `${f} is playing ${np.artist} right now, ${artistHit ? 'one of your favorites' : 'in a genre you like'}. You're both free ${PART_WORD[part]}. Jam session?`,
+        });
+      }
+    }
 
     for (const sc of view.shared_courses) {
       const mine = myCourses.get(sc.code);
@@ -423,7 +524,7 @@ export function buildSuggestions({ meId, mySig: mySigIn, entries, proposals, tod
   }
 
   out.study_match.sort((a, b) => (b.help_topic ? 1 : 0) - (a.help_topic ? 1 : 0) || a.event.date.localeCompare(b.event.date));
-  return [...out.check_on, ...out.study_match, ...out.help_match, ...out.celebrate, ...out.hangout].slice(0, limit);
+  return [...out.check_on, ...out.jam, ...out.study_match, ...out.help_match, ...out.celebrate, ...out.hangout].slice(0, limit);
 }
 
 // ---------- log scrubbing ----------

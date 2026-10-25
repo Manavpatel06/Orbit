@@ -100,7 +100,7 @@ async function authMember(store, token, code) {
 }
 
 // kind: who produced the entry - the student's Cubbie (agent), the student's own decision, or Orbit itself.
-const DEFAULT_KIND = { joined: 'student', left: 'system', shared: 'agent', proposed: 'agent', accepted: 'student', declined: 'student', countered: 'system', moved: 'agent', paused: 'student', resumed: 'student', rescheduled: 'agent', cheered: 'student', public: 'system' };
+const DEFAULT_KIND = { joined: 'student', left: 'system', shared: 'agent', proposed: 'agent', accepted: 'student', declined: 'student', countered: 'system', moved: 'agent', paused: 'student', resumed: 'student', rescheduled: 'agent', cheered: 'student', public: 'system', playing: 'agent' };
 const kindOf = (e) => e.kind || DEFAULT_KIND[e.type] || 'system';
 const log = (store, code, actor, type, text, actor_id, kind, extra) => store.addLog({ circle_code: code, ts: new Date(), actor, actor_id: actor_id || null, type, kind: kind || DEFAULT_KIND[type] || 'system', text, ...(extra || {}) });
 const logView = (e) => ({ id: e._id ? String(e._id) : null, ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text });
@@ -193,7 +193,7 @@ async function sweepProposals(store, proposals) {
       next = await store.transitionProposal(p.id, { status: 'open' }, { to_ids: yes, status: 'accepted', date, time, place: L.pickPlace(p), remind_at: L.remindAt(date, time), updated_at: new Date(), change: 'accepted' });
       if (next) {
         const dropped = p.to_ids.filter((i) => !yes.includes(i)).map((i) => names.get(i) || FORMER).join(' and ');
-        const what = `${p.kind === 'study' ? (p.course ? `Study ${p.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(date)} · ${L.prettyTime(time)}${L.pickPlace(p) ? ` · ${L.pickPlace(p)}` : ''}`;
+        const what = `${kindLabel(p)} · ${L.prettyDate(date)} · ${L.prettyTime(time)}${L.pickPlace(p) ? ` · ${L.pickPlace(p)}` : ''}`;
         await log(store, p.circle_code, 'Orbit', 'accepted', `${dropped} didn't answer in time; plan set for the rest. Plan set: ${what}`, null, 'system');
       }
     } else {
@@ -213,7 +213,7 @@ function proposalView(p, names, me) {
     round: p.round || 1, note: p.note || '',
     status: p.status, responses: p.responses, parent_id: p.parent_id || null, created_at: iso(p.created_at),
     moved_by_name: p.moved_by_name || null,
-    reasons: p.reasons || [], places: p.places || [], place: p.place || null, remind_at: p.remind_at || null,
+    reasons: p.reasons || [], places: p.places || [], place: p.place || null, remind_at: p.remind_at || null, playlist: playlistView(p),
     reschedules: p.reschedules || 0, change: p.change || null, updated_at: iso(p.updated_at),
     my_response: me ? p.responses[me] || null : null,
   };
@@ -237,7 +237,33 @@ function lockFields(cur, today) {
   const time = cur.time || L.canonTime(cur.window);
   return { status: 'accepted', date, time, place: L.pickPlace(cur), remind_at: L.remindAt(date, time), updated_at: new Date(), change: 'accepted' };
 }
-const planLine = (q) => `${q.kind === 'study' ? (q.course ? `Study ${q.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}${q.place ? ` · ${q.place}` : ''}`;
+const NOW_PLAYING_MS = 30 * 60000;
+const kindNoun = (k) => (k === 'study' ? 'study session' : k === 'jam' ? 'jam session' : 'hangout');
+const kindLabel = (q) => (q.kind === 'study' ? (q.course ? `Study ${q.course}` : 'Study session') : q.kind === 'jam' ? 'Jam session' : 'Hangout');
+const planLine = (q) => `${kindLabel(q)} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}${q.place ? ` · ${q.place}` : ''}${q.playlist ? ` · 🎧 ${q.playlist.name}` : ''}`;
+const planLabel = (p) => (p.kind === 'jam' ? '🎸 Jam session' : p.kind === 'study' ? 'Study' : 'Hangout');
+const phoenixHHMM = (d = new Date()) => new Date(d.getTime() - 7 * 3600 * 1000).toISOString().slice(11, 16);
+/** `now=HH:MM` (the student's local clock). Default: Phoenix time (UTC-7, no DST), like the demo. */
+function nowParam(query) {
+  const v = query.get('now');
+  if (v === null || v === '') return phoenixHHMM();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(v)) throw new HttpError(400, 'bad_now', 'now must be a time like 19:00 (24h).');
+  return v;
+}
+/** A now-playing that still counts: its member opted in, is not paused, and the post has not expired. */
+function activeNowPlaying(m, now = new Date()) {
+  if (!m || m.paused || !m.music_consent || !m.now_playing) return null;
+  return new Date(m.now_playing.expires_at) > now ? m.now_playing : null;
+}
+/** Stored tastes, but only with music consent and something in them; null otherwise. Never sent to any client. */
+const tastesOf = (m) => (m && m.music_consent && m.tastes && (m.tastes.artists.length || m.tastes.genres.length) ? m.tastes : null);
+const nowPlayingView = (np) => ({ artist: np.artist, track: np.track || null, genre: np.genre || null, url: np.url || null, until: iso(np.expires_at) });
+const playlistView = (p) => (p.playlist ? { url: p.playlist.url, name: p.playlist.name } : null);
+/** Active now-playing per friend entry, keyed by member id. */
+function playingOf(entries, now = new Date()) {
+  return new Map(entries.map((e) => [e.member.member_id, activeNowPlaying(e.member, now)]).filter(([, np]) => np));
+}
+const musicFor = (me, playing) => ({ tastes: tastesOf(me), playing });
 
 // ---------- handlers ----------
 const H = {
@@ -281,18 +307,27 @@ const H = {
 
   async putSignal(ctx, code) {
     const me = await authMember(ctx.store, ctx.token, code);
-    const sig = L.sanitizeSignal(ctx.body);
+    const { music, ...sig } = L.sanitizeSignal(ctx.body);
     const updated = new Date();
     await ctx.store.putSignal({ ...sig, circle_code: code, member_id: me.member_id, updated_at: updated, expires_at: new Date(updated.getTime() + 8 * 86400000) });
+    // tastes live on the member, never in the signal: sending them is the music yes; null clears them
+    let after = me;
+    if (music !== undefined) {
+      const set = music === null ? { tastes: null } : { tastes: music, music_consent: true };
+      await ctx.store.setMember(code, me.member_id, set);
+      after = { ...me, ...set };
+    }
     await log(ctx.store, code, me.name, 'shared', `${me.name}'s Cubbie updated their availability.`, me.member_id);
-    return [200, { ok: true, updated_at: updated.toISOString() }];
+    return [200, { ok: true, updated_at: updated.toISOString(), music: !!tastesOf(after) }];
   },
 
   async feed(ctx, code) {
     const me = await authMember(ctx.store, ctx.token, code);
     const today = todayParam(ctx.query.get('today'));
+    const nowHHMM = nowParam(ctx.query);
     const [members, signals, proposalsRaw] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code)]);
     const proposals = await sweepProposals(ctx.store, proposalsRaw);
+    const now = new Date();
     const live = liveSignals(signals, members);
     const allSignals = new Map(signals.filter((s) => L.isLive(s)).map((s) => [s.member_id, s]));
     const mySig = allSignals.get(me.member_id) || null;
@@ -304,10 +339,10 @@ const H = {
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .map((p) => proposalView(p, names, me.member_id));
     return [200, {
-      me: { member_id: me.member_id, name: me.name },
+      me: { member_id: me.member_id, name: me.name, music: !!me.music_consent },
       friends: entries.map((e) => L.friendView(mySig, e.member, e.signal)),
       proposals: mine,
-      suggestions: L.buildSuggestions({ meId: me.member_id, mySig, entries, proposals, today }),
+      suggestions: L.buildSuggestions({ meId: me.member_id, mySig, entries, proposals, today, now, nowHHMM, music: musicFor(me, playingOf(entries, now)) }),
     }];
   },
 
@@ -326,7 +361,7 @@ const H = {
       id: crypto.randomBytes(4).toString('hex'), circle_code: code, from_id: me.member_id, to_ids: input.to, kind: input.kind,
       window: input.window, windows: input.windows, date: L.windowDate(input.window, today), time: input.time || L.canonTime(input.window),
       round: 1, tried: [input.window], note: input.note, status: 'open', responses: {}, parent_id: null, created_at: now,
-      places: input.places, place: null, place_votes: {}, reschedules: 0,
+      places: input.places, place: null, place_votes: {}, reschedules: 0, playlist: input.playlist,
       reasons: L.explainWindow(people, input.window, { today, course: input.kind === 'study' ? input.course : null }),
     };
     if (input.course) p.course = input.course;
@@ -334,7 +369,7 @@ const H = {
     const who = input.to.map((i) => names.get(i)).join(' and ');
     const where = input.places.length ? ` at ${input.places.join(' or ')}` : '';
     const order = input.windows.length > 1 ? `: ${input.windows.map(L.prettyWindow).join(', then ')}` : ` (${L.prettyWindow(input.window)})`;
-    await log(ctx.store, code, me.name, 'proposed', `${me.name}'s Cubbie proposed a ${input.kind === 'study' ? 'study session' : 'hangout'} to ${who}${order}${where}.`, me.member_id, 'agent');
+    await log(ctx.store, code, me.name, 'proposed', `${me.name}'s Cubbie proposed a ${kindNoun(input.kind)} to ${who}${order}${where}.`, me.member_id, 'agent');
     return [200, proposalView(p, names, me.member_id)];
   },
 
@@ -349,6 +384,7 @@ const H = {
     const freeWindows = answer === 'busy' && ctx.body.free_windows !== undefined && ctx.body.free_windows !== null ? L.windowList(ctx.body.free_windows, 21, 'free_windows') : null;
     // optional place answer, only meaningful with yes
     let placeVote = null;
+    let playlistIn = null;
     if (answer === 'yes') {
       const { place_choice: choice, place_suggest: suggest } = ctx.body;
       const hasChoice = choice !== undefined && choice !== null;
@@ -358,6 +394,7 @@ const H = {
         if (!Number.isInteger(choice) || choice < 0 || choice >= (p.places || []).length) throw new HttpError(400, 'bad_place', 'place_choice must be the number of one of the proposed places.');
         placeVote = p.places[choice];
       } else if (hasSuggest) placeVote = L.sanitizePlace(suggest, 'place_suggest');
+      if (ctx.body.playlist !== undefined && ctx.body.playlist !== null) playlistIn = L.sanitizePlaylist(ctx.body.playlist);
     }
     if (p.status !== 'open') throw new HttpError(409, 'proposal_closed', `This proposal is already ${p.status}.`);
     const today = todayParam(ctx.body.today);
@@ -370,11 +407,13 @@ const H = {
       const cur = await ctx.store.getProposal(id);
       throw new HttpError(409, 'proposal_closed', `This proposal is already ${cur ? cur.status : 'closed'}.`);
     };
-    const label = (q) => `${q.kind === 'study' ? 'study session' : 'hangout'} (${L.prettyWindow(q.window)})`;
+    const label = (q) => `${kindNoun(q.kind)} (${L.prettyWindow(q.window)})`;
 
     if (answer === 'yes') {
       let cur = await ctx.store.setResponse(id, me.member_id, 'yes', placeVote ? { [`place_votes.${me.member_id}`]: placeVote } : {}); // atomic: concurrent yeses cannot overwrite each other
       if (!cur) return closed();
+      // a playlist from any yes is kept only if the plan has none yet (first one wins)
+      if (playlistIn && !cur.playlist) cur = (await ctx.store.transitionProposal(id, { playlist: null }, { playlist: playlistIn })) || cur;
       if (cur.to_ids.every((i) => cur.responses[i] === 'yes')) {
         const won = await ctx.store.transitionProposal(id, { status: 'open' }, lockFields(cur, today));
         if (won) {
@@ -452,6 +491,7 @@ const H = {
       reasons: L.explainWindow(people, win, { today, course, note: `${me.name} can't do ${L.prettyWindow(p.window)}` }),
     };
     if (p.course) counter.course = p.course;
+    if (p.playlist) counter.playlist = p.playlist;
     await ctx.store.insertProposal(counter);
     await log(ctx.store, code, 'Orbit', 'countered', `${me.name} can't do ${L.prettyWindow(p.window)}. Orbit suggested ${L.prettyWindow(win)} instead.`, null, 'system');
     return view(upd, false, counter);
@@ -508,6 +548,7 @@ const H = {
   async inbox(ctx, code) {
     const me = await authMember(ctx.store, ctx.token, code);
     const today = todayParam(ctx.query.get('today'));
+    const nowHHMM = nowParam(ctx.query);
     const sinceRaw = ctx.query.get('since');
     const since = sinceRaw ? new Date(sinceRaw) : new Date(0);
     if (Number.isNaN(since.getTime())) throw new HttpError(400, 'bad_since', 'since must be an ISO timestamp.');
@@ -524,8 +565,11 @@ const H = {
     const mySig = signals.find((s) => s.member_id === me.member_id && L.isLive(s)) || null;
     const entries = members.filter((m) => m.member_id !== me.member_id && live.has(m.member_id)).map((m) => ({ member: m, signal: live.get(m.member_id) }));
     const fresh = new Set(entries.filter((e) => new Date(e.signal.updated_at) > since).map((e) => e.member.member_id));
-    const new_nudges = L.buildSuggestions({ meId: me.member_id, mySig, entries, proposals, today, limit: 1000 })
-      .filter((s) => (s.type === 'check_on' || s.type === 'celebrate') && fresh.has(s.friend_id));
+    // a jam nudge is sent once per now-playing post: only friends whose post is newer than the last inbox check
+    const playing = playingOf(entries);
+    const playFresh = new Set([...playing].filter(([, np]) => new Date(np.set_at) > since).map(([id]) => id));
+    const new_nudges = L.buildSuggestions({ meId: me.member_id, mySig, entries, proposals, today, limit: 1000, nowHHMM, music: musicFor(me, playing) })
+      .filter((s) => ((s.type === 'check_on' || s.type === 'celebrate') && fresh.has(s.friend_id)) || (s.type === 'jam' && playFresh.has(s.friend_id)));
     return [200, { needs_answer: needs, updates, new_nudges, now: nowIso() }];
   },
 
@@ -622,7 +666,9 @@ const H = {
       public_board: !!circleDoc.public_board,
       members: members.map((m) => {
         const s = live.get(m.member_id);
-        return { name: m.name, ...(s && s.busy ? { busy: s.busy } : {}), updated_at: iso(s && s.updated_at), cheers: sent.get(m.member_id) || 0, cheers_received: got.get(m.member_id) || 0 };
+        const np = activeNowPlaying(m);
+        return { name: m.name, ...(s && s.busy ? { busy: s.busy } : {}), updated_at: iso(s && s.updated_at), cheers: sent.get(m.member_id) || 0, cheers_received: got.get(m.member_id) || 0,
+          ...(np ? { now_playing: { artist: np.artist, track: np.track || null, until: iso(np.expires_at) } } : {}) };
       }),
       plans: proposals.filter((p) => bornAt(p).getTime() >= cutoff)
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
@@ -631,11 +677,12 @@ const H = {
           from_name: names.get(p.from_id) || FORMER, to_names: p.to_ids.map((i) => names.get(i) || FORMER), created_at: iso(p.created_at),
           updated_at: iso(p.updated_at || p.created_at), change: p.change || null, moved_by_name: p.moved_by_name || null,
           reasons: p.reasons || [], places: p.places || [], place: p.place || null, remind_at: p.remind_at || null, reschedules: p.reschedules || 0,
+          label: planLabel(p), playlist: p.playlist ? { name: p.playlist.name, url: p.playlist.url } : null,
         })),
       log: entries.map(logView),
       cursor: newest && newest._id ? String(newest._id) : sinceRaw || null,
       now: nowIso(),
-      stats: { proposals: proposals.length, locked: proposals.filter((p) => p.status === 'accepted').length, agent_moves: moves },
+      stats: { proposals: proposals.length, locked: proposals.filter((p) => p.status === 'accepted').length, agent_moves: moves, jams: proposals.filter((p) => p.kind === 'jam' && p.status === 'accepted').length },
     }];
   },
 
@@ -689,6 +736,66 @@ const H = {
     }];
   },
 
+  /** Music (v5): what the student's Cubbie is playing, shared with the circle for 30 minutes. Needs music consent. */
+  async nowPlaying(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    const np = L.sanitizeNowPlaying(ctx.body);
+    if (!me.music_consent && !np.consent) throw new HttpError(403, 'no_music_consent', 'Music sharing is off. Turn it on first.');
+    const now = new Date();
+    const set = { artist: np.artist, track: np.track, genre: np.genre, url: np.url, set_at: now, expires_at: new Date(now.getTime() + NOW_PLAYING_MS) };
+    await ctx.store.setMember(code, me.member_id, { now_playing: set, ...(np.consent ? { music_consent: true } : {}) });
+    await log(ctx.store, code, me.name, 'playing', `${me.name}'s Cubbie shared what he's playing 🎧`, me.member_id, 'agent');
+    return [200, { ok: true, now_playing: nowPlayingView(set) }];
+  },
+
+  async clearNowPlaying(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    const cleared = !!(me.now_playing && new Date(me.now_playing.expires_at) > new Date());
+    await ctx.store.setMember(code, me.member_id, { now_playing: null });
+    return [200, { ok: true, cleared }];
+  },
+
+  /** on:false turns music consent off and deletes my tastes and now-playing. Nothing is logged. */
+  async setMusic(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    if (typeof ctx.body.on !== 'boolean') throw new HttpError(400, 'bad_input', 'on must be true or false.');
+    await ctx.store.setMember(code, me.member_id, ctx.body.on ? { music_consent: true } : { music_consent: false, tastes: null, now_playing: null });
+    return [200, { ok: true, music_consent: ctx.body.on }];
+  },
+
+  /** Shared tastes only: the intersection of my tastes with the listed members'. Nothing else leaves the server. */
+  async vibe(ctx, code) {
+    const me = await authMember(ctx.store, ctx.token, code);
+    const kind = ctx.query.get('kind') || 'study';
+    if (kind !== 'study' && kind !== 'jam') throw new HttpError(400, 'bad_input', 'kind must be study or jam.');
+    const ids = [...new Set(String(ctx.query.get('with') || '').split(',').map((x) => x.trim()).filter(Boolean))];
+    if (!ids.length || ids.length > 11 || ids.some((i) => !/^[0-9a-f]{8}$/.test(i)) || ids.includes(me.member_id)) {
+      throw new HttpError(400, 'bad_input', 'with must list one or more other member_ids, comma separated.');
+    }
+    const members = await ctx.store.listMembers(code);
+    const byId = new Map(members.map((m) => [m.member_id, m]));
+    if (ids.some((i) => !byId.has(i))) throw new HttpError(400, 'unknown_member', 'One of the people you picked is not in this circle.');
+    const lists = [tastesOf(me), ...ids.map((i) => tastesOf(byId.get(i)))];
+    const shared = lists.some((t) => !t) ? { artists: [], genres: [] }
+      : { artists: L.sharedItems(lists.map((t) => t.artists)), genres: L.sharedItems(lists.map((t) => t.genres)) };
+    return [200, { kind, genres: shared.genres, artists: shared.artists, mood: L.moodFor(kind, shared.genres) }];
+  },
+
+  /** Only the proposer can attach or replace a plan's playlist, while the plan is open or locked. */
+  async setPlaylist(ctx, id) {
+    const me = await authMember(ctx.store, ctx.token);
+    let p = await ctx.store.getProposal(id);
+    if (!p || p.circle_code !== me.circle_code) throw new HttpError(404, 'proposal_not_found', 'No such proposal.');
+    [p] = await sweepProposals(ctx.store, [p]);
+    if (p.from_id !== me.member_id) throw new HttpError(403, 'not_proposer', 'Only the person who proposed this plan can change its playlist.');
+    const playlist = L.sanitizePlaylist(ctx.body);
+    if (!playlist) throw new HttpError(400, 'bad_input', 'playlist needs a url.');
+    const next = await ctx.store.transitionProposal(id, { status: { $in: ['open', 'accepted'] } }, { playlist, updated_at: new Date() });
+    if (!next) throw new HttpError(409, 'proposal_closed', 'This plan is closed, so its playlist cannot change.');
+    const names = new Map((await ctx.store.listMembers(me.circle_code)).map((m) => [m.member_id, m.name]));
+    return [200, { proposal: proposalView(next, names, me.member_id) }];
+  },
+
   async stats(ctx) {
     if (!statsCache || statsCache.store !== ctx.store || Date.now() - statsCache.t > 30000) {
       statsCache = { store: ctx.store, t: Date.now(), data: { ...(await ctx.store.stats()), updated_at: nowIso() } };
@@ -707,9 +814,9 @@ const H = {
     const quiz = L.windowDate('fri-evening', today);
     const week_of = L.weekMonday(today);
     const people = [
-      ['manav', 'Manav', { week_of, busy: 'busy', prefers: ['evening'], free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
+      ['manav', 'Manav', { week_of, busy: 'busy', prefers: ['evening'], music: { artists: ['Arctic Monkeys', 'Phoebe Bridgers'], genres: ['indie rock'] }, free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
       // Manas's coarse estimate still shows Tue evening as open; his calendar says otherwise (step 5)
-      ['manas', 'Manas', { week_of, busy: 'busy', prefers: ['evening'], avoid_days: ['mon'], free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
+      ['manas', 'Manas', { week_of, busy: 'busy', prefers: ['evening'], avoid_days: ['mon'], music: { artists: ['Radiohead', 'The Arctic Monkeys'], genres: ['lo-fi'] }, free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
       ['reya', 'Reya', { week_of, busy: 'packed', big_days: [L.addDays(today, 1)], free: ['wed-evening'], wins: ['Finished my capstone draft'], courses: [{ code: 'BIO 201', events: [{ kind: 'exam', title: 'Midterm', date: L.addDays(today, 1) }] }] }],
     ];
     const ids = {};
@@ -743,7 +850,10 @@ const H = {
 };
 
 let statsCache = null;
-const DEMO_STEPS = 14;
+const DEMO_STEPS = 18;
+const DAY_TOKENS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+// Public Spotify playlist used in the demo's jam beat (Spotify editorial "Indie's Top 50").
+const DEMO_PLAYLIST = 'https://open.spotify.com/playlist/37i9dQZF1DX2Nc3B70tvx0';
 const demoHits = new Map();
 function demoRateLimit(req) {
   const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'x').split(',')[0].trim();
@@ -784,7 +894,7 @@ async function runDemoStep(store, demo, n) {
   const planOf = (q) => ({
     id: q.id, kind: q.kind, course: q.course || null, window: q.window, date: q.date, time: q.time, status: q.status, round: q.round || 1,
     from_name: q.from_name, to_names: q.to_names, reasons: q.reasons || [], places: q.places || [], place: q.place || null,
-    remind_at: q.remind_at || null, reschedules: q.reschedules || 0, change: q.change || null,
+    remind_at: q.remind_at || null, reschedules: q.reschedules || 0, change: q.change || null, playlist: q.playlist || null,
   });
   const getPlan = async () => {
     const members = await store.listMembers(code);
@@ -792,7 +902,7 @@ async function runDemoStep(store, demo, n) {
     return proposalView(await store.getProposal(demo.proposal_id), names, null);
   };
   const manavFeed = () => demoCall(store, H.feed, tokens.manav, {}, { today }, code);
-  const planLineOf = (q) => `${q.kind === 'study' ? `Study ${q.course}` : 'Hangout'} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}${q.place ? ` · ${q.place}` : ''}`;
+  const planLineOf = (q) => planLine(q);
   const placesText = (q) => (q.place ? q.place : (q.places || []).join(' or '));
   const remindText = (q) => (q.remind_at ? `Reminder set for ${clock(q.remind_at.slice(11, 16))}.` : '');
 
@@ -869,6 +979,40 @@ async function runDemoStep(store, demo, n) {
       const text = `${c ? c.friend_name : 'Reya'} has a big day tomorrow. Want a short text to send her?`;
       return out('manav_cubbie', 'left', text, [bub('left', 'cubbie', text)]);
     }
+    case 15: {
+      // Manav's Cubbie shares what he is playing. The demo calendar also has both of them free tonight, so a match is possible.
+      const eveningTok = `${DAY_TOKENS[L.dow(today)]}-evening`;
+      for (const key of ['manav', 'manas']) {
+        const cur = await store.getSignal(code, ids[key]);
+        await store.putSignal({ ...cur, free: [...new Set([...(cur.free || []), eveningTok])] });
+      }
+      const np = await demoCall(store, H.nowPlaying, tokens.manav, { artist: 'Arctic Monkeys', track: 'Do I Wanna Know?' }, {}, code);
+      const text = `Manav's Cubbie shared what he's playing: ${np.now_playing.artist} – ${np.now_playing.track}. It stays up for 30 min.`;
+      return out('manav_cubbie', 'agents', text, [], { log_entry: await lastLog(), now_playing: np.now_playing });
+    }
+    case 16: {
+      // Manas's own feed produces the jam suggestion (his tastes match the artist, both free tonight)
+      const feed = await demoCall(store, H.feed, tokens.manas, {}, { today, now: '19:00' }, code);
+      const j = feed.suggestions.find((s) => s.type === 'jam');
+      const text = j ? j.text : 'Manav is playing Arctic Monkeys right now. Jam session?';
+      return out('manas_cubbie', 'right', text, [bub('right', 'cubbie', text)], { suggestion: j || null });
+    }
+    case 17: {
+      const pr = await demoCall(store, H.propose, tokens.manas, {
+        to: [ids.manav], kind: 'jam', windows: [`${DAY_TOKENS[L.dow(today)]}-evening`], places: ["Manav's place", 'Zoom'],
+        playlist: { url: DEMO_PLAYLIST, name: "Indie's Top 50" }, today,
+      }, {}, code);
+      await store.updateDemo(demo.demo_id, { jam_id: pr.id });
+      return out('manas', 'right', 'yes', [bub('right', 'student', 'yes')], { log_entry: await lastLog(), plan: planOf(pr) });
+    }
+    case 18: {
+      const r = await demoCall(store, H.respond, tokens.manav, { answer: 'yes', place_choice: 0, today }, {}, demo.jam_id);
+      const q = r.proposal;
+      const text = `Locked in: ${planLineOf(q)}`;
+      const added = `Added to your calendar. ${remindText(q)}`.trim();
+      return out('orbit', 'left', text, [bub('left', 'cubbie', `${text}\n${added}`), bub('right', 'cubbie', `${text}\n${added}`)], { log_entry: await lastLog(), plan: planOf(q) });
+    }
+    case 14:
     default: {
       const draft = 'Big day tomorrow, you got this. coffee after? ☕';
       await demoCall(store, H.cheer, tokens.manav, { friend_id: ids.reya }, {}, code); // Manav sends it himself; Orbit only logs that he checked on her
@@ -897,6 +1041,10 @@ function route(method, parts) {
       if (c === 'public' && method === 'POST') return [H.setPublic, code];
       if (c === 'cheer' && method === 'POST') return [H.cheer, code];
       if (c === 'suggest-times' && method === 'GET') return [H.suggestTimes, code];
+      if (c === 'now-playing' && method === 'POST') return [H.nowPlaying, code];
+      if (c === 'now-playing' && method === 'DELETE') return [H.clearNowPlaying, code];
+      if (c === 'music' && method === 'POST') return [H.setMusic, code];
+      if (c === 'vibe' && method === 'GET') return [H.vibe, code];
     }
   }
   if (a === 'stats' && parts.length === 1 && method === 'GET') return [H.stats];
@@ -904,13 +1052,14 @@ function route(method, parts) {
   if (a === 'demo' && c === 'step' && parts.length === 3 && method === 'POST') return [H.demoStep, b];
   if (a === 'proposals' && parts.length === 3 && c === 'respond' && method === 'POST') return [H.respond, b];
   if (a === 'proposals' && parts.length === 3 && c === 'conflict' && method === 'POST') return [H.conflict, b];
+  if (a === 'proposals' && parts.length === 3 && c === 'playlist' && method === 'POST') return [H.setPlaylist, b];
   return null;
 }
 
 export function createHandler(getStoreFn) {
   return async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Max-Age', '86400');
     if (req.method === 'OPTIONS') {

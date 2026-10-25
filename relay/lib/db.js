@@ -55,14 +55,15 @@ export function createMongoStore(db) {
     async stats() {
       const demoCodes = (await c.circles.find({ demo: true }, { projection: { _id: 0, code: 1 } }).toArray()).map((x) => x.code);
       const real = { circle_code: { $nin: demoCodes } };
-      const [students, circles, proposals, plans_locked, agent_moves] = await Promise.all([
+      const [students, circles, proposals, plans_locked, agent_moves, jams] = await Promise.all([
         c.members.countDocuments(real),
         c.circles.countDocuments({ demo: { $ne: true } }),
         c.proposals.countDocuments(real),
         c.proposals.countDocuments({ ...real, status: 'accepted' }),
         c.log.countDocuments({ ...real, type: { $in: ['moved', 'countered', 'rescheduled'] } }),
+        c.proposals.countDocuments({ ...real, kind: 'jam', status: 'accepted' }),
       ]);
-      return { students, circles, plans_locked, agent_moves, proposals };
+      return { students, circles, plans_locked, agent_moves, proposals, jams };
     },
     countMembers: (code) => c.members.countDocuments({ circle_code: code }),
     listMembers: (code) => c.members.find({ circle_code: code }, NO_ID).sort({ joined_at: 1, member_id: 1 }).toArray(),

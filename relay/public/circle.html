@@ -113,6 +113,19 @@ body{background:#000;height:100vh;height:100dvh;overflow:hidden;display:flex;fle
 .hint{min-height:20px;margin-top:10px;font-size:13.5px;color:var(--red)}
 .banner{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:9;display:flex;gap:10px;align-items:center;padding:9px 16px;border-radius:999px;background:#1c1c1f;border:1px solid var(--line2);font-size:13.5px;color:#e5e5ea;box-shadow:0 14px 40px -12px rgba(0,0,0,.9)}
 .banner[hidden]{display:none}
+/* music: now playing on members, jam and playlist on plans, music-note packets */
+.node .np{display:flex;align-items:center;gap:7px;max-width:210px;height:24px;padding:0 10px 0 8px;border-radius:999px;background:rgba(100,210,255,.1);border:1px solid rgba(100,210,255,.34);color:var(--music);font-size:12px;font-weight:560;letter-spacing:-.005em;transition:opacity .8s ease,transform .8s ease}
+.node .np[hidden]{display:none}
+.node .np.gone{opacity:0;transform:translateY(-4px)}
+.node .np .ntx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d6f4ff}
+.plan .pl{margin-top:9px;display:flex;align-items:center;gap:8px;min-width:0;font-size:13.5px;color:var(--music)}
+.plan .pl svg{flex:none}
+.plan .pl a{display:inline-flex;align-items:center;gap:6px;min-width:0;color:#d6f4ff;text-decoration:none;border-bottom:1px solid rgba(100,210,255,.35);padding-bottom:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:border-color .2s,color .2s}
+.plan .pl a:hover{color:#fff;border-color:var(--music)}
+.packet.music .nt{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--music);color:#00202b;box-shadow:0 0 0 5px rgba(100,210,255,.22),0 0 22px rgba(100,210,255,.8)}
+.packet.music .nt svg{width:13px;height:13px}
+.packet.music .lb{border-color:rgba(100,210,255,.45);color:#d6f4ff}
+@media (max-width:900px){.node .np{max-width:150px}}
 /* mobile */
 @media (max-width:900px){
   .board{grid-template-columns:1fr;width:calc(100% - 32px);flex:none}
@@ -128,7 +141,7 @@ body{background:#000;height:100vh;height:100dvh;overflow:hidden;display:flex;fle
   .node .who{top:38px}
   .node .nm{font-size:13px}
   .node .chip{display:none}
-  .core{width:24%;height:24%}
+  .core{width:14%;height:14%}
   .bar .wrap{width:calc(100% - 32px)}
   .nav .wrap{width:calc(100% - 32px)}
   .links a:not(.btn){display:none}
@@ -164,7 +177,7 @@ body{background:#000;height:100vh;height:100dvh;overflow:hidden;display:flex;fle
       <div id="nodes"></div>
       <div id="packets" aria-hidden="true"></div>
     </div>
-    <p class="legend"><span><i style="border-color:var(--green)"></i>Locked in</span><span><i style="border-color:var(--blue);border-style:dashed"></i>Negotiating</span><span><i style="border-color:var(--amber)"></i>Moved</span></p>
+    <p class="legend"><span><i style="border-color:var(--green)"></i>Locked in</span><span><i style="border-color:var(--blue);border-style:dashed"></i>Negotiating</span><span><i style="border-color:var(--amber)"></i>Moved</span><span><i style="border-color:var(--music);border-style:dotted"></i>Music</span></p>
     <div class="banner" id="banner" role="status" hidden></div>
   </section>
 

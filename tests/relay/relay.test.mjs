@@ -66,7 +66,7 @@ ok(sug.length <= 5 && sug[0].type === 'check_on' && /big day tomorrow/.test(sug[
 const sm = sug.find((s) => s.type === 'study_match' && s.friend_name === 'Sam');
 ok(sm && sm.help_topic === 'HMMs' && sm.course === 'CSE 576' && sm.window === 'thu-evening' && sm.event.date === '2026-10-30', 'study_match with help_topic');
 const types = sug.map((s) => s.type);
-ok(JSON.stringify(types) === JSON.stringify([...types].sort((a, b) => ['check_on', 'study_match', 'help_match', 'celebrate', 'hangout'].indexOf(a) - ['check_on', 'study_match', 'help_match', 'celebrate', 'hangout'].indexOf(b))), 'suggestion priority order');
+ok(JSON.stringify(types) === JSON.stringify([...types].sort((a, b) => ['check_on', 'jam', 'study_match', 'help_match', 'celebrate', 'hangout'].indexOf(a) - ['check_on', 'jam', 'study_match', 'help_match', 'celebrate', 'hangout'].indexOf(b))), 'suggestion priority order');
 ok(sug.some((s) => s.type === 'celebrate'), 'celebrate present');
 const fc = (await call('GET', `/circles/${code}/feed?today=${TODAY}`, { token: C.token })).j;
 ok(!fc.suggestions.some((s) => s.type === 'hangout'), 'packed member gets no hangout suggestion');
@@ -371,13 +371,13 @@ let demoStarts = 0;
 const startDemo = async () => { demoStarts++; return call('POST', '/demo/start'); };
 {
   const st = await startDemo();
-  ok(st.status === 200 && /^[0-9a-f]{12}$/.test(st.j.demo_id) && /^[A-Z2-9]{6}$/.test(st.j.code) && /^[0-9a-f]{24}$/.test(st.j.view_v) && st.j.steps_total === 14, 'demo start shape');
+  ok(st.status === 200 && /^[0-9a-f]{12}$/.test(st.j.demo_id) && /^[A-Z2-9]{6}$/.test(st.j.code) && /^[0-9a-f]{24}$/.test(st.j.view_v) && st.j.steps_total === 18, 'demo start shape');
   const dcode = st.j.code;
   const responses = [JSON.stringify(st.j)];
   const steps = [];
-  for (let i = 1; i <= 14; i++) {
+  for (let i = 1; i <= 18; i++) {
     const r = await call('POST', `/demo/${st.j.demo_id}/step`);
-    ok(r.status === 200 && r.j.step === i && r.j.total === 14 && r.j.done === (i === 14) && r.j.text && ['left', 'right', 'agents'].includes(r.j.channel), `demo step ${i}`);
+    ok(r.status === 200 && r.j.step === i && r.j.total === 18 && r.j.done === (i === 18) && r.j.text && ['left', 'right', 'agents'].includes(r.j.channel), `demo step ${i}`);
     steps.push(r.j); responses.push(JSON.stringify(r.j));
   }
   ok(/^You and Manas both have CSE 576, quiz Fri\. Study Tue evening, or Thu\?$/.test(steps[0].text) && steps[0].bubble.from === 'cubbie' && steps[0].bubble.side === 'left', 'demo step 1 text from the real feed');
@@ -396,7 +396,13 @@ const startDemo = async () => { demoStarts++; return call('POST', '/demo/start')
   ok(steps[10].plan.status === 'accepted' && steps[10].log_entry.type === 'accepted' && steps[10].plan.window === 'sat-afternoon', 'demo step 11 Manav confirms the new time');
   ok(/^Locked in: Study CSE 576 · Sat [A-Z][a-z]{2} \d{1,2} · 2:00 PM · Hayden Library 2nd floor$/.test(steps[11].text) && /Calendar updated/.test(steps[11].bubbles[0].text) && steps[11].plan.round === 3, 'demo step 12 locked in again');
   ok(/^Reya has a big day tomorrow\. Want a short text to send her\?$/.test(steps[12].text), 'demo step 13 check_on from real feed');
-  ok(steps[13].text === 'Big day tomorrow, you got this. coffee after? ☕' && /not the AI/.test(steps[13].note) && steps[13].done === true && /^Manav checked on Reya/.test(steps[13].log_entry.text), 'demo step 14 draft + cheer logged');
+  ok(steps[13].text === 'Big day tomorrow, you got this. coffee after? ☕' && /not the AI/.test(steps[13].note) && steps[13].done === false && /^Manav checked on Reya/.test(steps[13].log_entry.text), 'demo step 14 draft + cheer logged');
+  // v5 jam beat (steps 15-18): share what you play, a jam nudge from the real feed, a jam proposal with a playlist, locked in
+  ok(steps[14].channel === 'agents' && steps[14].text === "Manav's Cubbie shared what he's playing: Arctic Monkeys – Do I Wanna Know?. It stays up for 30 min." && steps[14].log_entry.type === 'playing' && !/Arctic/.test(steps[14].log_entry.text) && steps[14].now_playing.artist === 'Arctic Monkeys', 'v5 demo step 15: now-playing shared, log names no artist');
+  ok(steps[15].channel === 'right' && steps[15].text === "Manav is playing Arctic Monkeys right now, one of your favorites. You're both free this evening. Jam session?" && steps[15].suggestion.type === 'jam' && steps[15].bubble.side === 'right', 'v5 demo step 16: Manas gets the real jam suggestion');
+  ok(steps[16].text === 'yes' && steps[16].bubble.from === 'student' && steps[16].plan.kind === 'jam' && steps[16].plan.status === 'open' && steps[16].plan.playlist.name === "Indie's Top 50" && steps[16].log_entry.type === 'proposed', 'v5 demo step 17: yes proposes a jam session with a playlist');
+  ok(steps[17].plan.status === 'accepted' && steps[17].plan.kind === 'jam' && /^Locked in: Jam session · [A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · 7:00 PM · Manav's place · 🎧 Indie's Top 50$/.test(steps[17].text) && steps[17].done === true && steps[17].bubbles.length === 2 && /Reminder set for 6 PM/.test(steps[17].bubbles[0].text), 'v5 demo step 18: locked in on both phones with the playlist');
+  ok(steps.slice(14).every((s) => !/tok|token|[0-9a-f]{64}/i.test(JSON.stringify(s))), 'v5 demo jam steps carry no raw tokens');
   ok(new Date(steps[7].plan.date + 'T00:00:00Z').getUTCDay() === 4 && new Date(steps[11].plan.date + 'T00:00:00Z').getUTCDay() === 6, 'demo plan dates are Thursday then Saturday');
   ok((await call('POST', `/demo/${st.j.demo_id}/step`)).status === 409, 'demo step after done -> 409');
   ok((await call('POST', '/demo/aaaaaaaaaaaa/step')).status === 404 && (await call('POST', '/demo/zzz/step')).status === 404, 'unknown demo 404');
@@ -404,17 +410,17 @@ const startDemo = async () => { demoStarts++; return call('POST', '/demo/start')
   const bd = await call('GET', `/circles/${dcode}/board?v=${st.j.view_v}`);
   responses.push(JSON.stringify(bd.j), JSON.stringify((await call('GET', `/circles/${dcode}/log?v=${st.j.view_v}&limit=100`)).j));
   ok(bd.status === 200 && bd.j.name === `Demo · ${dcode}` && bd.j.members.map((m) => m.name).sort().join() === 'Manas,Manav,Reya', 'demo board members');
-  ok(bd.j.plans.length === 1 && bd.j.plans[0].status === 'accepted' && bd.j.plans[0].round === 3 && bd.j.stats.locked === 1 && bd.j.stats.agent_moves === 2, 'demo board plan + stats');
-  ok(bd.j.plans[0].place === 'Hayden Library 2nd floor' && bd.j.plans[0].reasons.length >= 2 && bd.j.members.find((m) => m.name === 'Manav').cheers === 1 && bd.j.members.find((m) => m.name === 'Reya').cheers_received === 1, 'demo board plan has place + reasons, member cheers count');
+  ok(bd.j.plans.length === 2 && bd.j.plans.find((p) => p.kind === 'jam').status === 'accepted' && bd.j.plans.find((p) => p.kind === 'study').round === 3 && bd.j.stats.locked === 2 && bd.j.stats.agent_moves === 2 && bd.j.stats.jams === 1, 'demo board plans + stats (v5: jam plan counted)');
+  ok(bd.j.plans.find((p) => p.kind === 'study').place === 'Hayden Library 2nd floor' && bd.j.plans.find((p) => p.kind === 'study').reasons.length >= 2 && bd.j.members.find((m) => m.name === 'Manav').cheers === 1 && bd.j.members.find((m) => m.name === 'Reya').cheers_received === 1, 'demo board plan has place + reasons, member cheers count');
   const types = bd.j.log.map((e) => e.type);
-  ok(['proposed', 'moved', 'rescheduled', 'accepted', 'cheered', 'shared', 'joined'].every((t) => types.includes(t)) && bd.j.log[0].type === 'cheered', 'demo log has real proposal, busy-move, reschedule, accept, cheer (newest first)');
+  ok(['proposed', 'moved', 'rescheduled', 'accepted', 'cheered', 'shared', 'joined', 'playing'].every((t) => types.includes(t)) && bd.j.log[0].type === 'accepted', 'demo log has real proposal, busy-move, reschedule, accept, cheer, playing, jam lock (newest first)');
   const doc = await mdb.collection('demos').findOne({ demo_id: st.j.demo_id });
   const toks = Object.values(doc.tokens);
   ok(toks.length === 3 && toks.every((t) => /^[0-9a-f]{64}$/.test(t)), 'demo doc keeps raw tokens server-side');
   demoTokens.push(...toks);
   ok(toks.every((t) => !responses.join('\n').includes(t)), 'demo raw tokens never in any API response');
   ok((await call('POST', `/circles/${dcode}/join`, { body: { member_name: 'Intruder' } })).status === 403, 'cannot join a demo circle');
-  ok((await mdb.collection('proposals').countDocuments({ circle_code: dcode, status: 'accepted' })) === 1, 'demo proposal really stored as accepted');
+  ok((await mdb.collection('proposals').countDocuments({ circle_code: dcode, status: 'accepted' })) === 2, 'demo proposals really stored as accepted (study + jam)');
 }
 
 // -- demo cleanup, rate limit, stats
@@ -434,10 +440,11 @@ const startDemo = async () => { demoStarts++; return call('POST', '/demo/start')
     proposals: await mdb.collection('proposals').countDocuments(real),
     plans_locked: await mdb.collection('proposals').countDocuments({ ...real, status: 'accepted' }),
     agent_moves: await mdb.collection('log').countDocuments({ ...real, type: { $in: ['moved', 'countered'] } }),
+    jams: await mdb.collection('proposals').countDocuments({ ...real, kind: 'jam', status: 'accepted' }),
   };
   const s1 = await call('GET', '/stats');
-  ok(s1.status === 200 && Object.keys(s1.j).sort().join() === 'agent_moves,circles,plans_locked,proposals,students,updated_at', 'stats shape (no personal data)');
-  ok(['students', 'circles', 'proposals', 'plans_locked', 'agent_moves'].every((k) => s1.j[k] === exp[k]), `stats counts match non-demo data ${JSON.stringify(exp)}`);
+  ok(s1.status === 200 && Object.keys(s1.j).sort().join() === 'agent_moves,circles,jams,plans_locked,proposals,students,updated_at', 'stats shape (no personal data)');
+  ok(['students', 'circles', 'proposals', 'plans_locked', 'agent_moves', 'jams'].every((k) => s1.j[k] === exp[k]), `stats counts match non-demo data ${JSON.stringify(exp)}`);
   ok(exp.students < (await mdb.collection('members').countDocuments({})) && exp.plans_locked >= 2 && exp.agent_moves >= 2 && exp.circles >= 4, 'stats exclude demo circles and count real plans/moves');
   const extra = (await call('POST', '/circles', { body: { name: 'After', member_name: 'Q' } })).j;
   const s2 = await call('GET', '/stats');
@@ -637,6 +644,187 @@ await mc.close();
   const stored = JSON.stringify([...(await m4.collection('log').find({ circle_code: v4 }).toArray()), ...(await m4.collection('proposals').find({ circle_code: v4 }).toArray()), ...(await m4.collection('signals').find({ circle_code: v4 }).toArray()), ...(await m4.collection('circles').find({ code: v4 }).toArray())]);
   ok(tokens4.every((t) => !seen4.join('\n').includes(t) && !stored.includes(t)), 'v4: raw tokens never appear in any v4 response or stored log/proposal/signal/circle document');
   await mc4.close();
+}
+
+// ===================== v5: music (consent, now-playing, jam nudges, playlists, vibe) =====================
+{
+  const mc5 = await MongoClient.connect(process.env.MONGODB_URI);
+  const m5 = mc5.db('orbit_test');
+  const seen5 = []; // every v5 response body, scanned for raw tokens and taste leaks at the end
+  const c5 = async (...a) => { const r = await call(...a); seen5.push(JSON.stringify(r.j)); return r; };
+  const T5 = '2026-10-26'; // Monday: today's windows are mon-*
+  const SECRET = 'SECRETBAND';
+  const tokens5 = [];
+  const join = async (name, circle) => {
+    // joins hand back the member's own token by design, so they are not recorded in seen5
+    const r = circle ? (await call('POST', `/circles/${circle}/join`, { body: { member_name: name } })).j : (await call('POST', '/circles', { body: { name: 'Music Crew', member_name: name } })).j;
+    tokens5.push(r.token);
+    return r;
+  };
+  const P = await join('Pia');
+  const code5 = P.code;
+  const V = await join('Vik', code5);
+  const G = await join('Gus', code5);
+  const D = await join('Dev', code5);
+  const N = await join('Nia', code5);
+  const sig5 = (m, body) => c5('PUT', `/circles/${code5}/signal`, { token: m.token, body: { week_of: T5, busy: 'light', free: ['mon-morning', 'mon-evening', 'tue-evening'], ...body } });
+  const dbm = (m) => m5.collection('members').findOne({ circle_code: code5, member_id: m.member_id });
+  const post = (m, body) => c5('POST', `/circles/${code5}/now-playing`, { token: m.token, body });
+  const feedOf = async (m, now = '19:00') => (await c5('GET', `/circles/${code5}/feed?today=${T5}&now=${now}`, { token: m.token })).j;
+
+  // ---- consent gating ----
+  ok((await post(N, { artist: 'Radiohead' })).status === 403 && (await post(N, { artist: 'Radiohead' })).j.code === 'no_music_consent', 'v5: now-playing without music consent -> 403 no_music_consent');
+  ok(!(await dbm(N)).tastes && !(await dbm(N)).music_consent, 'v5: nothing music-related stored for a member without consent');
+  ok((await sig5(N, { busy: 'busy' })).j.music === false, 'v5: a signal without music reports music false');
+  ok((await sig5(V, { music: { artists: Array.from({ length: 16 }, (_, i) => `band ${i}`), genres: [] } })).status === 400, 'v5: more than 15 artists -> 400');
+  ok((await sig5(V, { music: { artists: ['x'.repeat(41)] } })).status === 400 && (await sig5(V, { music: { genres: Array.from({ length: 9 }, (_, i) => `g${i}`) } })).status === 400, 'v5: artist over 40 chars and more than 8 genres -> 400');
+  ok((await sig5(V, { music: 'Radiohead' })).status === 400 && (await sig5(V, { music: { artists: [''] } })).status === 400, 'v5: music must be an object of lists (no empty entries)');
+  ok((await dbm(V)).tastes === undefined || !(await dbm(V)).tastes, 'v5: rejected music never stored');
+  const sv = await sig5(V, { music: { artists: ['The Arctic Monkeys', 'Radiohead', SECRET], genres: ['lo-fi', 'indie rock'] } });
+  ok(sv.status === 200 && sv.j.music === true && (await dbm(V)).music_consent === true, 'v5: sending tastes is the yes; signal reports music true');
+  const sp = await sig5(P, { music: { artists: ['Arctic Monkeys', 'Phoebe Bridgers'], genres: ['indie rock', 'punk'] } });
+  ok(sp.j.music === true, 'v5: Pia shares tastes');
+  await sig5(P, { busy: 'packed' });
+  ok(JSON.stringify((await dbm(P)).tastes.artists) === '["Arctic Monkeys","Phoebe Bridgers"]', 'v5: a signal without music keeps stored tastes');
+  ok((await sig5(P, { music: null })).j.music === false && (await dbm(P)).tastes === null && (await dbm(P)).music_consent === true, 'v5: music null clears tastes and keeps consent');
+  ok((await c5('POST', `/circles/${code5}/music`, { token: P.token, body: { on: 'yes' } })).status === 400, 'v5: consent endpoint wants a boolean');
+  ok((await c5('POST', `/circles/${code5}/music`, { token: P.token, body: { on: true } })).j.music_consent === true, 'v5: consent on via /music');
+  await sig5(P, { music: { artists: ['Arctic Monkeys', 'Phoebe Bridgers'], genres: ['indie rock', 'punk'] } });
+  await sig5(G, { music: { artists: ['Boards of Canada'], genres: ['ambient', 'lo-fi'] } });
+  await sig5(D, { music: { artists: ['Drake'], genres: ['rap'] } });
+  ok((await dbm(N)).tastes === undefined || (await dbm(N)).tastes === null, 'v5: a member who never shared music has no tastes');
+
+  // ---- now-playing: post, replace, url rules, expiry-by-field, delete ----
+  const np1 = await post(P, { artist: 'Arctic Monkeys', track: 'Do I Wanna Know?', url: 'https://open.spotify.com/track/7abcXYZ?si=zzz' });
+  const until = Date.parse(np1.j.now_playing.until) - Date.now();
+  ok(np1.status === 200 && np1.j.now_playing.artist === 'Arctic Monkeys' && np1.j.now_playing.url === 'https://open.spotify.com/track/7abcXYZ' && until > 29 * 60e3 && until <= 30 * 60e3 + 2000, 'v5: now-playing lasts 30 min, url canonical (query dropped)');
+  const lg5 = (await c5('GET', `/circles/${code5}/log?limit=5`, { token: P.token })).j.entries[0];
+  ok(lg5.type === 'playing' && lg5.kind === 'agent' && lg5.text === "Pia's Cubbie shared what he's playing 🎧" && !/Arctic|Monkeys/.test(lg5.text), 'v5: log says the Cubbie shared what it is playing, never the artist');
+  const np2 = await post(P, { artist: 'Phoebe Bridgers', track: 'Motion Sickness' });
+  const row = await dbm(P);
+  ok(np2.status === 200 && row.now_playing.artist === 'Phoebe Bridgers' && row.now_playing.url === null && row.now_playing.expires_at > new Date(Date.now() + 29 * 60e3), 'v5: a new post replaces the old one and refreshes the 30 min');
+  const badUrls = ['http://open.spotify.com/track/abc', 'https://evil.com/open.spotify.com/track/abc', 'https://open.spotify.com.evil.com/track/abc', 'https://open.spotify.com/user/abc', 'javascript:alert(1)', 'https://open.spotify.com/track/', 'https://open.spotify.com/track/abc def', 42];
+  ok((await Promise.all(badUrls.map((u) => post(P, { artist: 'X', url: u })))).every((r) => r.status === 400), 'v5: only https://open.spotify.com/<kind>/<id> links are accepted');
+  ok((await post(P, { artist: 'Phoebe Bridgers', url: 'https://open.spotify.com/intl-de/track/abc' })).j.now_playing.url === 'https://open.spotify.com/track/abc', 'v5: intl- Spotify links are accepted and canonicalized');
+  ok((await post(P, {})).status === 400 && (await post(P, { artist: 'a'.repeat(41) })).status === 400 && (await post(P, { artist: 'Z', genre: 'g'.repeat(25) })).status === 400, 'v5: artist required, artist <= 40, genre <= 24');
+  ok((await c5('POST', `/circles/${code5}/now-playing`, { body: { artist: 'Z' } })).status === 401, 'v5: now-playing needs a bearer token');
+  ok((await c5('GET', `/circles/${code5}/board`, { token: P.token })).j.members.find((m) => m.name === 'Pia').now_playing.artist === 'Phoebe Bridgers', 'v5: board shows the current post');
+  ok((await c5('DELETE', `/circles/${code5}/now-playing`, { token: P.token })).j.cleared === true && (await c5('DELETE', `/circles/${code5}/now-playing`, { token: P.token })).j.cleared === false, 'v5: DELETE clears now-playing (cleared true then false)');
+  ok(!('now_playing' in (await c5('GET', `/circles/${code5}/board`, { token: P.token })).j.members.find((m) => m.name === 'Pia')), 'v5: after DELETE the board has no now_playing for Pia');
+  await post(G, { artist: 'Boards of Canada', genre: 'Lo-Fi' });
+  await post(D, { artist: 'Drake', genre: 'rap' });
+  await post(P, { artist: 'Arctic Monkeys', track: 'Do I Wanna Know?', url: 'https://open.spotify.com/track/7abcXYZ' });
+
+  // ---- board: now_playing only with consent + active; paused members hidden ----
+  const bd5 = (await c5('GET', `/circles/${code5}/board`, { token: V.token })).j;
+  const bp = bd5.members.find((m) => m.name === 'Pia');
+  ok(bp.now_playing && bp.now_playing.artist === 'Arctic Monkeys' && bp.now_playing.track === 'Do I Wanna Know?' && !('url' in bp.now_playing) && bp.now_playing.until, 'v5: board now_playing has artist, track and until only');
+  ok(!('now_playing' in bd5.members.find((m) => m.name === 'Nia')) && !('now_playing' in bd5.members.find((m) => m.name === 'Vik')), 'v5: members without consent or a post have no now_playing key');
+  await c5('POST', `/circles/${code5}/pause`, { token: P.token });
+  ok(!('now_playing' in (await c5('GET', `/circles/${code5}/board`, { token: V.token })).j.members.find((m) => m.name === 'Pia')), 'v5: a paused member is not shown playing');
+  await c5('POST', `/circles/${code5}/resume`, { token: P.token });
+  await sig5(P, {});
+
+  // ---- jam suggestions ----
+  const fv = await feedOf(V);
+  const jams = fv.suggestions.filter((s) => s.type === 'jam');
+  const jp = jams.find((s) => s.friend_name === 'Pia');
+  ok(jp && jp.artist === 'Arctic Monkeys' && jp.match === 'artist' && jp.window === 'mon-evening' && jp.track === 'Do I Wanna Know?' && jp.url === 'https://open.spotify.com/track/7abcXYZ' && jp.friend_id === P.member_id, 'v5: jam suggestion when artist matches tastes, both free, today');
+  ok(jp && jp.text === "Pia is playing Arctic Monkeys right now, one of your favorites. You're both free this evening. Jam session?", 'v5: jam text matches the spec');
+  ok(fv.suggestions[0].type === 'jam' && fv.me.music === true, 'v5: jam comes first (no check_on here) and feed says I have music on');
+  const jg = jams.find((s) => s.friend_name === 'Gus');
+  ok(jg && jg.match === 'genre' && /in a genre you like/.test(jg.text), 'v5: genre match when the artist is not in my list but the genre is');
+  ok(!jams.some((s) => s.friend_name === 'Dev'), 'v5: no jam when nothing matches my tastes (rap)');
+  ok(!jams.some((s) => s.friend_name === 'Nia'), 'v5: no jam from a member without music consent');
+  ok((await feedOf(V, '09:00')).suggestions.find((s) => s.type === 'jam' && s.friend_name === 'Pia').text.includes('free this morning'), 'v5: window follows the viewer local time (morning)');
+  const fn = await feedOf(N);
+  ok(!fn.suggestions.some((s) => s.type === 'jam') && fn.me.music === false, 'v5: a member without music consent gets no jam suggestion');
+  // expired now-playing: nothing shows anywhere
+  await m5.collection('members').updateOne({ circle_code: code5, member_id: P.member_id }, { $set: { 'now_playing.expires_at': new Date(Date.now() - 1000) } });
+  ok(!(await feedOf(V)).suggestions.some((s) => s.type === 'jam' && s.friend_name === 'Pia') && !('now_playing' in (await c5('GET', `/circles/${code5}/board`, { token: V.token })).j.members.find((m) => m.name === 'Pia')), 'v5: an expired post shows nowhere (feed or board)');
+  await post(P, { artist: 'Arctic Monkeys', track: 'Do I Wanna Know?', url: 'https://open.spotify.com/track/7abcXYZ' });
+  // no common window left for today -> no jam
+  await sig5(V, { free: ['tue-evening'] });
+  ok(!(await feedOf(V)).suggestions.some((s) => s.type === 'jam' && s.friend_name === 'Pia'), 'v5: no jam when there is no window free for both today');
+  await sig5(V, { music: { artists: ['The Arctic Monkeys', 'Radiohead', SECRET], genres: ['lo-fi', 'indie rock'] } });
+
+  // ---- inbox: a jam nudge is sent once per post ----
+  const ib1 = (await c5('GET', `/circles/${code5}/inbox?since=1970-01-01T00:00:00Z&today=${T5}&now=19:00`, { token: V.token })).j;
+  ok(ib1.new_nudges.some((n) => n.type === 'jam' && n.friend_name === 'Pia') && ib1.new_nudges.some((n) => n.type === 'jam' && n.friend_name === 'Gus'), 'v5: inbox new_nudges carry the jam nudges');
+  const ib2 = (await c5('GET', `/circles/${code5}/inbox?since=${encodeURIComponent(ib1.now)}&today=${T5}&now=19:00`, { token: V.token })).j;
+  ok(!ib2.new_nudges.some((n) => n.type === 'jam'), 'v5: the same post is not nudged twice');
+  await post(P, { artist: 'Arctic Monkeys', track: 'R U Mine?' });
+  const ib3 = (await c5('GET', `/circles/${code5}/inbox?since=${encodeURIComponent(ib2.now)}&today=${T5}&now=19:00`, { token: V.token })).j;
+  ok(ib3.new_nudges.some((n) => n.type === 'jam' && n.friend_name === 'Pia' && n.track === 'R U Mine?') && !ib3.new_nudges.some((n) => n.type === 'jam' && n.friend_name === 'Gus'), 'v5: a new post nudges again, only for the friend who posted');
+  ok((await c5('GET', `/circles/${code5}/feed?today=${T5}&now=25:00`, { token: V.token })).status === 400, 'v5: now must be HH:MM');
+
+  // ---- jam proposal: playlist, negotiation, lock ----
+  const jp1 = await c5('POST', `/circles/${code5}/proposals`, { token: P.token, body: { to: [V.member_id], kind: 'jam', windows: ['mon-evening', 'tue-evening'], course: 'CSE 576', today: T5, playlist: { url: 'https://open.spotify.com/playlist/37i9dQZF1DX8', name: 'Indie jam mix' } } });
+  const JP = jp1.j;
+  ok(jp1.status === 200 && JP.kind === 'jam' && JP.course === null && JP.playlist.name === 'Indie jam mix' && JP.playlist.url === 'https://open.spotify.com/playlist/37i9dQZF1DX8' && JP.to_names.join() === 'Vik', 'v5: jam proposal carries a playlist and no course');
+  ok((await c5('POST', `/circles/${code5}/proposals`, { token: P.token, body: { to: [V.member_id], kind: 'jam', windows: ['mon-evening'], today: T5, playlist: { url: 'https://open.spotify.com/artist/abc' } } })).status === 400, 'v5: playlist must be a playlist, album or track link');
+  ok((await c5('POST', `/circles/${code5}/proposals`, { token: P.token, body: { to: [V.member_id], kind: 'party', windows: ['mon-evening'], today: T5 } })).status === 400, 'v5: kind must be study, hangout or jam');
+  ok((await c5('POST', `/circles/${code5}/proposals`, { token: P.token, body: { to: [V.member_id], kind: 'jam', windows: ['mon-evening'], today: T5, playlist: 'https://open.spotify.com/playlist/x' } })).status === 400, 'v5: playlist must be an object');
+  ok(!(await feedOf(V)).suggestions.some((s) => s.type === 'jam' && s.friend_name === 'Pia'), 'v5: no jam nudge for a friend within 6 h of a jam proposal between us');
+  await m5.collection('proposals').updateOne({ id: JP.id }, { $set: { created_at: new Date(Date.now() - 7 * 3600e3) } });
+  ok((await feedOf(V)).suggestions.some((s) => s.type === 'jam' && s.friend_name === 'Pia'), 'v5: a jam proposal 7 h old no longer blocks the nudge');
+  const jbusy = (await c5('POST', `/proposals/${JP.id}/respond`, { token: V.token, body: { answer: 'busy', free_windows: ['tue-evening'], today: T5 } })).j;
+  ok(jbusy.moved === true && jbusy.proposal.window === 'tue-evening' && jbusy.proposal.kind === 'jam' && jbusy.proposal.playlist.name === 'Indie jam mix', 'v5: busy moves a jam like any plan and keeps the playlist');
+  const jyes = (await c5('POST', `/proposals/${JP.id}/respond`, { token: V.token, body: { answer: 'yes', playlist: { url: 'https://open.spotify.com/playlist/other', name: 'Other' } } })).j;
+  ok(jyes.proposal.status === 'accepted' && jyes.proposal.playlist.name === 'Indie jam mix' && jyes.proposal.date === '2026-10-27' && jyes.proposal.time === '19:00', 'v5: yes locks the jam; a playlist in a yes does not replace the existing one');
+  const lockLog = (await m5.collection('log').findOne({ circle_code: code5, type: 'accepted', text: /Jam session/ }));
+  ok(lockLog && lockLog.text === "Vik said yes. Plan set: Jam session · Tue Oct 27 · 7:00 PM · 🎧 Indie jam mix", 'v5: lock log line names the jam and its playlist');
+  ok((await c5('POST', `/proposals/${JP.id}/respond`, { token: V.token, body: { answer: 'yes' } })).status === 409, 'v5: a locked jam cannot be answered again');
+  const bdj = (await c5('GET', `/circles/${code5}/board`, { token: P.token })).j;
+  const bj = bdj.plans.find((p) => p.id === JP.id);
+  ok(bj && bj.kind === 'jam' && bj.label === '🎸 Jam session' && bj.playlist.name === 'Indie jam mix' && bj.playlist.url === 'https://open.spotify.com/playlist/37i9dQZF1DX8' && bdj.stats.jams === 1, 'v5: board plan has the jam label, playlist, and stats.jams counts it');
+  ok(bdj.plans.every((p) => typeof p.label === 'string'), 'v5: every board plan has a label');
+  // playlist on a plan: only the proposer, only while open or locked
+  ok((await c5('POST', `/proposals/${JP.id}/playlist`, { token: V.token, body: { url: 'https://open.spotify.com/album/abc' } })).status === 403, 'v5: only the proposer can change the playlist (403 not_proposer)');
+  ok((await c5('POST', `/proposals/${JP.id}/playlist`, { token: P.token, body: { url: 'https://evil.com/album/abc' } })).status === 400, 'v5: playlist url validated on update');
+  const pl2 = await c5('POST', `/proposals/${JP.id}/playlist`, { token: P.token, body: { url: 'https://open.spotify.com/album/abc', name: 'Late set' } });
+  ok(pl2.status === 200 && pl2.j.proposal.playlist.name === 'Late set', 'v5: the proposer can replace the playlist of a locked plan');
+  ok((await c5('POST', `/proposals/ffffffff/playlist`, { token: P.token, body: { url: 'https://open.spotify.com/album/abc' } })).status === 404, 'v5: playlist on an unknown plan -> 404');
+  const jdec = (await c5('POST', `/circles/${code5}/proposals`, { token: P.token, body: { to: [G.member_id], kind: 'jam', windows: ['tue-evening'], today: T5 } })).j;
+  await c5('POST', `/proposals/${jdec.id}/respond`, { token: G.token, body: { answer: 'busy', free_windows: [], today: T5 } });
+  ok((await c5('POST', `/proposals/${jdec.id}/playlist`, { token: P.token, body: { url: 'https://open.spotify.com/album/abc' } })).status === 409, 'v5: a declined plan cannot get a playlist (409)');
+  // group jam: first playlist wins across yeses
+  const gj = (await c5('POST', `/circles/${code5}/proposals`, { token: P.token, body: { to: [V.member_id, G.member_id], kind: 'jam', windows: ['mon-evening'], today: T5 } })).j;
+  await c5('POST', `/proposals/${gj.id}/respond`, { token: V.token, body: { answer: 'yes', playlist: { url: 'https://open.spotify.com/playlist/first', name: 'First pick' } } });
+  const gl = (await c5('POST', `/proposals/${gj.id}/respond`, { token: G.token, body: { answer: 'yes', playlist: { url: 'https://open.spotify.com/playlist/second', name: 'Second pick' } } })).j;
+  ok(gl.proposal.status === 'accepted' && gl.proposal.playlist.name === 'First pick', 'v5: group jam locks; the first playlist offered is kept');
+
+  // ---- vibe: intersection only ----
+  await sig5(V, { music: { artists: ['The Arctic Monkeys', 'Radiohead', SECRET], genres: ['lo-fi', 'indie rock'] } });
+  await sig5(G, { music: { artists: ['Boards of Canada'], genres: ['ambient', 'lo-fi'] } });
+  const vj = (await c5('GET', `/circles/${code5}/vibe?with=${P.member_id}&kind=jam`, { token: V.token })).j;
+  ok(JSON.stringify(vj) === JSON.stringify({ kind: 'jam', genres: ['indie rock'], artists: ['The Arctic Monkeys'], mood: 'upbeat' }), 'v5: vibe with a friend returns only the shared artists and genres; jam default mood upbeat');
+  const vs = (await c5('GET', `/circles/${code5}/vibe?with=${P.member_id}`, { token: V.token })).j;
+  ok(vs.kind === 'study' && vs.mood === 'focus' && vs.genres.join() === 'indie rock', 'v5: study defaults to focus when no shared genre hints a mood');
+  const vg = (await c5('GET', `/circles/${code5}/vibe?with=${G.member_id}&kind=study`, { token: V.token })).j;
+  ok(vg.mood === 'focus' && vg.genres.join() === 'lo-fi' && vg.artists.length === 0, 'v5: a shared lo-fi genre sets focus');
+  ok(!seen5.some((s) => /SECRETBAND/.test(s)) && (await c5('GET', `/circles/${code5}/vibe?with=${N.member_id}&kind=jam`, { token: V.token })).j.genres.length === 0, 'v5: vibe with a member who has no music consent is empty; secret taste never leaves');
+  ok((await c5('GET', `/circles/${code5}/vibe?with=${V.member_id}`, { token: V.token })).status === 400 && (await c5('GET', `/circles/${code5}/vibe?with=${P.member_id}&kind=party`, { token: V.token })).status === 400 && (await c5('GET', `/circles/${code5}/vibe?with=deadbeef`, { token: V.token })).status === 400 && (await c5('GET', `/circles/${code5}/vibe?with=${P.member_id}`)).status === 401, 'v5: vibe validation (self, kind, unknown, auth)');
+
+  // ---- consent off: tastes, now-playing and jam all go; nothing is logged ----
+  const logBefore = (await m5.collection('log').countDocuments({ circle_code: code5 }));
+  ok((await c5('POST', `/circles/${code5}/music`, { token: V.token, body: { on: false } })).j.music_consent === false, 'v5: consent off via /music');
+  const dv = await dbm(V);
+  ok(dv.music_consent === false && dv.tastes === null && (await m5.collection('log').countDocuments({ circle_code: code5 })) === logBefore, 'v5: consent off clears tastes and logs nothing');
+  ok((await feedOf(V)).me.music === false && !(await feedOf(V)).suggestions.some((s) => s.type === 'jam'), 'v5: after consent off the viewer gets no jam and music false');
+  ok((await post(V, { artist: 'Radiohead' })).status === 403, 'v5: after consent off now-playing is refused');
+  ok((await c5('GET', `/circles/${code5}/vibe?with=${P.member_id}&kind=jam`, { token: V.token })).j.genres.length === 0, 'v5: vibe is empty once consent is off');
+
+  // ---- stats, privacy, tokens ----
+  const st5 = (await c5('GET', '/stats')).j;
+  ok(typeof st5.jams === 'number' && st5.jams >= 0, 'v5: public stats include jams');
+  ok(tokens5.every((t) => !seen5.join('\n').includes(t)), 'v5: raw tokens never appear in any v5 response');
+  const stored5 = JSON.stringify([...(await m5.collection('log').find({ circle_code: code5 }).toArray()), ...(await m5.collection('proposals').find({ circle_code: code5 }).toArray()), ...(await m5.collection('members').find({ circle_code: code5 }).toArray())]);
+  ok(tokens5.every((t) => !stored5.includes(t)) && !/SECRETBAND/.test(JSON.stringify(await m5.collection('log').find({ circle_code: code5 }).toArray())), 'v5: taste strings never reach the log or proposals');
+  const O = await join('Ola', code5);
+  const po = await post(O, { artist: 'Radiohead', consent: true });
+  ok(po.status === 200 && (await dbm(O)).music_consent === true, 'v5: now-playing with consent: true grants consent in the same call');
+  await mc5.close();
 }
 
 // leave

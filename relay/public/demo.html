@@ -93,6 +93,19 @@ body{background:radial-gradient(70% 50% at 50% 0,rgba(11,132,254,.10),transparen
 .reschc b{display:block;font-size:4.1cqw;color:#fff;letter-spacing:-.02em}
 .reschc span{display:block;color:#d1d1d6;font-size:3.3cqw;margin-top:.4cqw}
 .chg{margin-left:0}
+/* music beat: song card, note packet, playlist line */
+.packet.music span{display:inline-flex;align-items:center;gap:7px;background:#0b2430;color:#d6f4ff;border:1px solid rgba(100,210,255,.5);box-shadow:0 0 0 4px rgba(100,210,255,.18),0 8px 30px rgba(100,210,255,.4)}
+.packet.music span svg{flex:none;width:13px;height:13px;color:var(--music)}
+.song{align-self:flex-end;width:76%;display:flex;gap:2.6cqw;align-items:center;padding:2.2cqw 3.2cqw 2.2cqw 2.2cqw;border-radius:4.2cqw;background:#1c1c1e;border:1px solid rgba(255,255,255,.08);box-shadow:0 10px 30px -14px rgba(0,0,0,.9)}
+.song .art{flex:none;width:13cqw;height:13cqw;border-radius:2.6cqw;background:radial-gradient(circle at 70% 30%,rgba(100,210,255,.55),transparent 55%),linear-gradient(150deg,#16384a,#07141c);display:grid;place-items:center;color:var(--music)}
+.song .art svg{width:5.6cqw;height:5.6cqw}
+.song .meta{min-width:0;display:flex;flex-direction:column;gap:.7cqw}
+.song b{display:block;font-size:3.8cqw;font-weight:600;letter-spacing:-.015em;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.song .meta>span{font-size:3.2cqw;color:#8e8e93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.song small{display:flex;gap:1.2cqw;align-items:center;margin-top:.5cqw;color:var(--music);font-size:2.9cqw;font-weight:600}
+.song small svg{width:3.4cqw;height:3.4cqw;flex:none}
+.lockc .plist{display:flex;gap:1.2cqw;align-items:center;margin-top:1cqw;color:var(--music);font-size:3.2cqw;font-weight:580}
+.lockc .plist svg{width:3.6cqw;height:3.6cqw;flex:none}
 </style>
 </head>
 <body>
@@ -136,6 +149,7 @@ body{background:radial-gradient(70% 50% at 50% 0,rgba(11,132,254,.10),transparen
 <script>
 (function(){
 var $=function(s){return document.querySelector(s)};
+var NOTE='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>';
 var CAL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4"/></svg>';
 function phone(el,name){
   el.innerHTML='<div class="island"></div><div class="sb"><span>9:41</span><span><svg width="18" height="11" viewBox="0 0 18 11" fill="#fff"><rect y="7" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="6" rx="1"/><rect x="10" y="2.5" width="3" height="8.5" rx="1"/><rect x="15" width="3" height="11" rx="1"/></svg><svg width="26" height="12" viewBox="0 0 26 12"><rect x=".5" y=".5" width="22" height="11" rx="3.5" fill="none" stroke="#fff" opacity=".4"/><rect x="2" y="2" width="19" height="8" rx="2" fill="#fff"/></svg></span></div>'+
@@ -157,9 +171,9 @@ function geom(){var c=$('#chan'),w=c.clientWidth,h=c.clientHeight,r=mobile()?23:
 function drawLanes(){var g=geom();$('#lanes').setAttribute('viewBox','0 0 '+g.w+' '+g.h);
   $('#lanes').innerHTML='<defs><linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#0B84FE" stop-opacity=".6"/><stop offset="1" stop-color="#fff" stop-opacity=".18"/></linearGradient></defs><path d="'+g.top+'" fill="none" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="2 7" stroke-linecap="round"/><path d="'+g.bot+'" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="1.5" stroke-dasharray="2 7" stroke-linecap="round"/><g transform="translate('+g.w/2+','+g.h/2+')">'+(O.mark(64).replace('<svg','<svg x="-32" y="-32"').replace('class="mark "','class="mark"'))+'</g>'}
 function relayMark(){/* drawn inside lanes svg */}
-function packet(dir,label){
+function packet(dir,label,music){
   if(O.reduced){hit(dir==='lr'?'#nR':'#nL');return O.sleep(500)}
-  var g=geom(),p=document.createElement('div');p.className='packet';p.innerHTML='<span>'+O.esc(label)+'</span>';
+  var g=geom(),p=document.createElement('div');p.className='packet'+(music?' music':'');p.innerHTML='<span>'+(music?NOTE:'')+O.esc(label)+'</span>';
   p.style.offsetPath="path('"+(dir==='lr'?g.top:g.bot)+"')";$('#chan').appendChild(p);
   var a=p.animate([{offsetDistance:'0%',opacity:0,scale:.6},{opacity:1,scale:1,offset:.12},{opacity:1,offset:.88},{offsetDistance:'100%',opacity:0,scale:.8}],{duration:1150,easing:'cubic-bezier(.45,.05,.3,1)',fill:'forwards'});
   return a.finished.then(function(){p.remove();hit(dir==='lr'?'#nR':'#nL')},function(){p.remove()})}
@@ -171,7 +185,7 @@ function add(side,text,from,extra){var t=TH[side],d=document.createElement('div'
   if(extra){var n=document.createElement('div');n.className='note';n.textContent=extra;t.appendChild(n)}return d}
 function typing(side){var t=TH[side],d=document.createElement('div');d.className='b in pop typing';d.innerHTML='<i></i><i></i><i></i>';t.appendChild(d);return d}
 function lock(side,plan){var text='';var d=document.createElement('div');d.className='lockc pop';
-  d.innerHTML=CAL+'<div><b>Locked in</b><span>'+O.esc((plan&&plan.title)||'Study session')+'</span><span>'+O.esc([plan&&plan.date,plan&&plan.time,plan&&plan.place].filter(Boolean).join(' · ')||text||'')+'</span><small><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>Added to your calendar</small></div>';
+  d.innerHTML=CAL+'<div><b>Locked in</b><span>'+O.esc((plan&&plan.title)||'Study session')+'</span><span>'+O.esc([plan&&plan.date,plan&&plan.time,plan&&plan.place].filter(Boolean).join(' · ')||text||'')+'</span>'+(plan&&plan.playlist?'<span class="plist">'+NOTE+O.esc(plan.playlist.name)+'</span>':'')+'<small><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>Added to your calendar</small></div>';
   TH[side].appendChild(d)}
 function act(side){['left','right'].forEach(function(s){PH[s].classList.toggle('act',s===side||side==='both')})}
 function cap(side,text,hot){CAP[side].textContent=text;CAP[side].classList.toggle('hot',!!hot)}
@@ -192,7 +206,7 @@ function showErr(m){var e=$('#err');e.textContent=m;e.classList.toggle('hide',!m
 function errMsg(e){if(e&&e.status===429)return'The demo is busy right now (limit: 20 starts per 10 minutes per network). Wait a minute, then press Start again.';
   if(e&&e.status>=500)return'The Orbit server hit a problem starting the demo. Try again in a moment.';return'Couldn’t reach the Orbit server. Check your connection and try again.'}
 
-function label(s){var t=(s.text||'').toLowerCase();if(/busy|moved/.test(t))return'busy · moved to Thu';if(/received|inbox/.test(t))return'proposal delivered';if(/propos/.test(t))return'proposal · Tue / Thu evening';if(/lock|plan/.test(t))return'plan locked';return'update'}
+function label(s){if(s.label)return s.label;var t=(s.text||'').toLowerCase();if(/busy|moved/.test(t))return'busy · moved to Thu';if(/received|inbox/.test(t))return'proposal delivered';if(/propos/.test(t))return'proposal · Tue / Thu evening';if(/lock|plan/.test(t))return'plan locked';return'update'}
 function dirOf(s){var t=(s.text||'').toLowerCase();if(/received|inbox/.test(t))return'lr';if(s.actor==='manas_cubbie'||s.actor==='manas')return'rl';return'lr'}
 function scrollTo(side){if(!mobile())return;PH[side].scrollIntoView({behavior:O.reduced?'auto':'smooth',block:'center'})}
 
@@ -204,6 +218,8 @@ function reasonsCard(side,list){if(!list||!list.length)return;var d=document.cre
 function isResched(s){return!!(s.reschedule||s.beat==='reschedule'||/calendar changed|new conflict/i.test(s.text||''))}
 function reschedCard(side,text){var d=document.createElement('div');d.className='reschc pop';
   d.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/></svg><div><b>Calendar changed</b><span>'+O.esc(text)+'</span></div>';TH[side].appendChild(d)}
+function songCard(side,sh){var d=document.createElement('div');d.className='song pop';
+  d.innerHTML='<div class="art">'+NOTE+'</div><div class="meta"><b>'+O.esc(sh.track)+'</b><span>'+O.esc(sh.artist)+'</span><small>'+NOTE+'Spotify link</small></div>';TH[side].appendChild(d)}
 async function play(s,my){
   prog(s.step);who(s.actor);var other={left:'right',right:'left'};
   var bubbles=s.bubbles&&s.bubbles.length?s.bubbles:[].concat(s.bubble||[]);
@@ -213,15 +229,16 @@ async function play(s,my){
   if(!bubbles.length){
     act('none');var d=dirOf(s),a=d==='lr'?'left':'right',b=other[a];
     cap(a,s.text,1);cap(b,'Not interrupted. The agents are handling this.',0);
-    await packet(d,label(s));if(my!==run)return;await board();return}
+    await packet(d,label(s),!!s.music);if(my!==run)return;await board();return}
   var locked=bubbles.some(function(x){return/^Locked in/i.test(x.text)});
   if(locked){act('both');cap('left','Locked in. Added to Manav’s calendar.',1);cap('right','Locked in. Added to Manas’s calendar.',1)}
   for(var i=0;i<bubbles.length;i++){var bb=bubbles[i],side=bb.side==='right'?'right':'left';
-    if(/^Locked in/i.test(bb.text)){var li=lockInfo(bb.text);lock(side,li);if(i===bubbles.length-1)await O.sleep(250);continue}
+    if(/^Locked in/i.test(bb.text)){var li=lockInfo(bb.text);li.playlist=s.plan&&s.plan.playlist;lock(side,li);if(i===bubbles.length-1)await O.sleep(250);continue}
     act(side);scrollTo(side);
     if(bb.from==='cubbie'){var last=i===bubbles.length-1,note=last&&s.note?s.note:null;
       cap(side,note?'Cubbie drafts the text. '+NAMES[side]+' sends it himself.':'Cubbie asks '+NAMES[side]+' once, at the right moment.',1);cap(other[side],NAMES[other[side]]+' isn’t interrupted.',0);
       var ty=typing(side);await O.sleep(O.reduced?100:650);if(my!==run)return;ty.remove();add(side,bb.text,'cubbie',note);if(rs&&i===bubbles.length-1&&!/^Locked in/i.test(bb.text))reasonsCard(side,rs)}
+    else if(bb.share){cap(side,NAMES[side]+' shared a song with his circle.',1);songCard(side,bb.share)}
     else{cap(side,NAMES[side]+' answers.',1);add(side,bb.text,'student')}
     if(i<bubbles.length-1)await O.sleep(350)}
   if(my!==run)return;await board()}

@@ -41,34 +41,37 @@ If `python3 scripts/orbit.py status` exits with 2, the student is not in a circl
 2. Ask one question: "What name should friends see? Your first name works." Use the answer as the display name.
 3. New circle: ask for a circle name (default: "<name>'s circle"), then run `python3 scripts/orbit.py create --name "<circle>" --me "<name>"`. Text the 6 character code on its own line and say: "Send this code to friends so they can join."
 4. Joining: run `python3 scripts/orbit.py join --code <CODE> --me "<name>"`.
-5. Consent, one question at a time, each with a default the student can accept with "yes":
-   - "Share a light/busy/packed level for your week? yes?"
-   - "Share which days are big days, like exams? yes?"
-   - "Share rough free windows like thu-evening? yes?"
-   - "Share your course codes and exam dates, only with friends in the same class? yes?"
-   - "Share topics you can help with or want help on? no?" (default no)
-   - "Share small wins, like finishing a project? yes?"
+5. Consent. Ask only yes or no questions, one at a time, each with a default the student can accept with "yes". Never ask the student for days, dates, times, levels, course codes or any other data: Orbit works all of that out itself from the student's connected accounts.
+   - "Can I share how busy your week looks (light, busy or packed)? I work it out from your Canvas and calendar. yes?"
+   - "Can I share which days are big days, like an exam day? Friends see the date only, never the reason. yes?"
+   - "Can I share when you're roughly free, like Thu evening, from your calendar? yes?"
+   - "Can I share your course codes and exam dates, only with friends in the same class? yes?"
+   - "Can I share topics you've asked me for help with, so a friend in the class can help? no?" (default no)
+   - "Can I share small wins, like submitting a big project? yes?"
    Save the answers with `python3 scripts/orbit.py consent --busy yes --big-days yes --free yes --courses yes --help no --wins yes`, using the student's real answers.
-6. Offer scheduled check-ins: "Want me to refresh your circle and check in twice a day? I'd suggest 8:30 am and 6 pm. What times work?" Create them only after the student says yes, at the times they pick. Word each check-in so it makes sense days later: "Orbit check-in: refresh my circle signals with python3 scripts/orbit.py share ..., then run feed and text me at most two nudges". Use the Orbit Skill folder and the student's local date at run time.
-7. Then do a first share (see Sharing) and a first feed (see Checking the circle).
+6. Connections. If the student said yes to something that needs Google Calendar, Gmail or Canvas and that account is not connected, ask them to connect it (one line, e.g. "Connect Google Calendar in Cubbie so I can see when you're free."). Do not ask them to type the information instead.
+7. Offer scheduled check-ins: "Want me to keep your circle updated and check in twice a day? 8:30 am and 6 pm? yes?" Create them only after the student says yes, at the times they pick. Word each check-in so it makes sense days later: "Orbit check-in: follow the Orbit Skill's Sharing steps to refresh my circle signals from my calendar, Gmail and Canvas, then run python3 scripts/orbit.py feed --today <today> and text me at most two nudges".
+8. Right away, do a first share (see Sharing) without asking anything more, then a first feed (see Checking the circle). Say one line, like "Done. Your circle can now see what you agreed to share."
 
 ## Sharing
 
-Only include what the student consented to. Do these in order.
+Sharing is automatic. Never ask the student questions here and never ask them for the values; read them from the connected accounts. Only include what the student consented to, and skip a field quietly if its account is not connected (mention the missing connection once, not every time). Do these in order.
 
-1. Free windows. Read the student's Google Calendar for the next 7 days. A window is free if it has at least 2 free hours inside it: morning is 8 am to 12 pm, afternoon is 12 pm to 5 pm, evening is 5 pm to 10 pm. Turn each free window into a token like mon-morning, thu-evening, sat-afternoon, and join them with commas. Never pass event names or exact times.
-2. Courses. Read the student's Canvas for upcoming exams, quizzes and deadlines in the next 14 days. Write a courses JSON file to a temp path, a list of courses with a code like "CSE 576" and its events, each with kind (exam, quiz or deadline), a short title and an ISO date. No grades, no assignment content. Pass it as `--courses-file <path>`.
-3. Busy level, counting exams, quizzes and deadlines:
-   - packed: 3 or more in the next 3 days, or 6 or more in the next 7 days
+1. Free windows (from Google Calendar). Read the student's Google Calendar for the next 7 days. A window is free if it has at least 2 free hours inside it: morning is 8 am to 12 pm, afternoon is 12 pm to 5 pm, evening is 5 pm to 10 pm. Turn each free window into a token like mon-morning, thu-evening, sat-afternoon, and join them with commas. Never pass event names or exact times.
+2. Courses (from Canvas). Read the student's Canvas for upcoming exams, quizzes and deadlines in the next 14 days, leaving out anything already submitted. Write a courses JSON file to a temp path: a list of courses with a code like "CSE 576" and its events, each with kind (exam, quiz or deadline), a short title and an ISO date. No grades, no assignment content. Pass it as `--courses-file <path>`.
+3. Other dates (from Gmail and email events). Search the student's synced email for upcoming exams, interviews or deadlines in the next 7 days that are not already in Canvas. Use them only to count toward the busy level and big days; never share the email or what it is about.
+4. Busy level, counting exams, quizzes, deadlines and interviews found above, plus how full the calendar is:
+   - packed: 3 or more in the next 3 days, or 6 or more in the next 7 days, or fewer than 3 free windows this week
    - busy: 2 or more in the next 3 days, or 3 or more in the next 7 days
    - light: anything else
-4. Big days: dates with an exam, or with 2 or more deadlines. Pass them as `--big-days`.
-5. Help topics and wins only if the student gave them. Pass `--can-help "CSE 576:attention"`, `--want-help "CSE 576:HMMs"` and `--win "finished my project"`.
-6. Always pass the student's local date as `--today YYYY-MM-DD`.
+5. Big days: dates with an exam or interview, or with 2 or more deadlines. Pass them as `--big-days`.
+6. Help topics (only if consented): use topics the student has recently asked Cubbie to explain or help with for one of their courses, as `--want-help "CSE 576:HMMs"`. Add `--can-help` only for topics the student has said they are good at. If there are none, leave them out. Do not ask.
+7. Wins (only if consented): a big project, exam or application the student submitted or finished in the last 2 days (from Canvas submissions or email), as a short phrase like `--win "submitted the CSE 576 project"`. If there are none, leave it out. Do not ask.
+8. Always pass the student's local date as `--today YYYY-MM-DD`.
 
 Run: `python3 scripts/orbit.py share --today <date> --busy <level> --big-days <dates> --free <tokens> --courses-file <path> ...`
 
-Delete the temp courses file afterwards. Say one line: "Updated what your circle sees."
+Delete the temp courses file afterwards. During a scheduled check-in, share silently; when the student asked, say one line: "Updated what your circle sees."
 
 ## Checking the circle
 
@@ -129,6 +132,7 @@ On exit 4 or 7, retry once, then give the line. Never retry silently more than o
 
 ## Not connected cases
 
-- Google Calendar not connected: say "Connect Google Calendar in Cubbie so I can see when you are free." Meanwhile ask: "Which evenings are you free this week?" Turn the answer into window tokens and continue.
-- Canvas not connected: share without courses and say "Connect Canvas to unlock study matches. I will still share your free times." Do not make up course codes.
+- Google Calendar not connected: ask once, "Connect Google Calendar in Cubbie so I can share when you're free." Until then share without free windows. Do not ask the student to list free times.
+- Gmail not connected: skip step 3 of Sharing; Canvas and the calendar are enough.
+- Canvas not connected: share without courses and say once "Connect Canvas to unlock study matches." Do not make up or ask for course codes.
 - Nothing matches: say "No matches yet. Want to invite more friends with your code?"

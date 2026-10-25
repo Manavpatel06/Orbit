@@ -4,6 +4,12 @@ Your Cubbie and your friends' Cubbies look out for each other.
 
 Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a private circle, each Cubbie shares a few coarse signals the student agrees to, and the Cubbies help you show up for each other on busy weeks. Built for the Cubbie Hackathon (Track 1: Cubbie Skills, Track 2: Agent-to-Agent Coordination).
 
+## Try it
+
+- Live site: https://orbit-cubbie.vercel.app
+- Watch two Cubbies negotiate on the live server: https://orbit-cubbie.vercel.app/demo
+- Install on Cubbie: text it https://github.com/Manavpatel06/Orbit/tree/main/orbit
+
 ## What it does
 
 1. Study match. Shared course plus overlapping free time.
@@ -14,7 +20,8 @@ Orbit is a Cubbie Skill that makes Cubbie multiplayer. Your friends join a priva
 4. Locked in, once. Both Cubbies get the same date and time and add it to their student's Google Calendar exactly once.
 5. Check-on nudges. A friend posted a big day, so Cubbie offers a short text for you to send yourself.
    "Reya has a big day tomorrow. Want a short text to send her?"
-6. Circle log. A live page showing every agent step and every student decision.
+6. Circle board. A view-only page (safe to share) showing plans and every agent step and student decision.
+7. Group plans. Propose to several friends; every Cubbie checks its own student's calendar, and the plan locks when everyone agrees (non-responders are dropped after 24 h if the others said yes).
 
 ## Install
 

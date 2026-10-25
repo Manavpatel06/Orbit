@@ -25,12 +25,41 @@ export function createMongoStore(db) {
     signals: db.collection('signals'),
     proposals: db.collection('proposals'),
     log: db.collection('log'),
+    demos: db.collection('demos'),
   };
   return {
     createCircle: dupAware((circle) => c.circles.insertOne({ ...circle })),
     getCircle: (code) => c.circles.findOne({ code }, NO_ID),
     async deleteCircleAll(code) {
-      await Promise.all(['circles', 'members', 'signals', 'proposals', 'log'].map((n) => c[n].deleteMany(n === 'circles' ? { code } : { circle_code: code })));
+      await Promise.all(['circles', 'members', 'signals', 'proposals', 'log', 'demos'].map((n) => c[n].deleteMany(n === 'circles' ? { code } : { circle_code: code })));
+    },
+    /** Sets view_key only if the circle has none yet (race-safe); returns the key that is stored. */
+    async ensureViewKey(code, key) {
+      await c.circles.updateOne({ code, view_key: { $exists: false } }, { $set: { view_key: key } });
+      const circle = await c.circles.findOne({ code }, NO_ID);
+      return circle ? circle.view_key : null;
+    },
+    listDemoCircles: (before) => c.circles.find({ demo: true, created_at: { $lt: before } }, NO_ID).toArray(),
+    insertDemo: (d) => c.demos.insertOne({ ...d }),
+    getDemo: (id) => c.demos.findOne({ demo_id: id }, NO_ID),
+    /** Atomic compare-and-set on the step counter; returns the updated demo or null if it was not at `from`. */
+    advanceDemo: (id, from, to, set = {}) => c.demos.findOneAndUpdate({ demo_id: id, step: from }, { $set: { ...set, step: to } }, { returnDocument: 'after', projection: { _id: 0 } }),
+    async updateDemo(id, set) {
+      await c.demos.updateOne({ demo_id: id }, { $set: set });
+    },
+    countLog: (code, types) => c.log.countDocuments({ circle_code: code, type: { $in: types } }),
+    /** Public numbers; demo circles are excluded everywhere. */
+    async stats() {
+      const demoCodes = (await c.circles.find({ demo: true }, { projection: { _id: 0, code: 1 } }).toArray()).map((x) => x.code);
+      const real = { circle_code: { $nin: demoCodes } };
+      const [students, circles, proposals, plans_locked, agent_moves] = await Promise.all([
+        c.members.countDocuments(real),
+        c.circles.countDocuments({ demo: { $ne: true } }),
+        c.proposals.countDocuments(real),
+        c.proposals.countDocuments({ ...real, status: 'accepted' }),
+        c.log.countDocuments({ ...real, type: { $in: ['moved', 'countered'] } }),
+      ]);
+      return { students, circles, plans_locked, agent_moves, proposals };
     },
     countMembers: (code) => c.members.countDocuments({ circle_code: code }),
     listMembers: (code) => c.members.find({ circle_code: code }, NO_ID).sort({ joined_at: 1, member_id: 1 }).toArray(),
@@ -67,7 +96,7 @@ export function createMongoStore(db) {
     async addLog(entry) {
       await c.log.insertOne({ ...entry });
     },
-    listLog: (code, limit) => c.log.find({ circle_code: code }, NO_ID).sort({ ts: -1 }).limit(limit).toArray(),
+    listLog: (code, limit) => c.log.find({ circle_code: code }, NO_ID).sort({ ts: -1, _id: -1 }).limit(limit).toArray(),
     /** mapper(entry) -> object of fields to $set, or null to leave the entry alone. */
     async scrubLog(code, mapper) {
       const ops = [];
@@ -90,6 +119,8 @@ async function ensureIndexes(db) {
     db.collection('proposals').createIndex({ id: 1 }, { unique: true }),
     db.collection('proposals').createIndex({ circle_code: 1, created_at: 1 }),
     db.collection('log').createIndex({ circle_code: 1, ts: -1 }),
+    db.collection('demos').createIndex({ demo_id: 1 }, { unique: true }),
+    db.collection('circles').createIndex({ demo: 1, created_at: 1 }),
     // bound growth: old log entries and proposals expire after 30 days
     db.collection('log').createIndex({ ts: 1 }, { expireAfterSeconds: 30 * 86400 }),
     db.collection('proposals').createIndex({ created_at: 1 }, { expireAfterSeconds: 30 * 86400 }),

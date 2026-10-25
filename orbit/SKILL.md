@@ -91,6 +91,14 @@ In a scheduled check-in, run `feed --new-only` instead. It prints only what has 
 3. After yes: `python3 scripts/orbit.py propose --to "<name>" --kind study --course "CSE 576" --windows tue-evening,thu-evening --today <date>`. The windows are ranked best first. Use `--kind hangout` for non-study plans, without `--course`. Leave out `--time` (the server picks the time) unless the student gave one. Add `--note` only if the student gave one.
 4. Say: "Asked. I will tell you when they answer." Never text the friend.
 
+## Group plans
+
+For "find a time for all of us", propose to several friends at once with repeated `--to`: `python3 scripts/orbit.py propose --to "Manas" --to "Reya" --kind study --course "CSE 576" --windows tue-evening,thu-evening --today <date>`. Use only windows that every friend and the student have free, and ask the student the same one yes/no question first, naming everyone.
+
+- Each friend's Cubbie checks its own student's calendar and answers on its own. A busy answer moves the plan to the next time that works for everyone.
+- The plan locks when all of them say yes.
+- If someone has not answered after 24 hours and at least one friend said yes, the plan is set for the rest. If nobody said yes it expires. Tell the student in one line when either happens.
+
 ## Answering requests
 
 A line "Needs you: ... (id X)" from `inbox` or `feed` is a request from a friend. Handle it in this order, without asking the student anything you can check yourself.
@@ -128,7 +136,7 @@ Nudges only repeat what a friend posted, like "Manas: big day tomorrow". Never g
 
 ## Circle log link
 
-Run `python3 scripts/orbit.py log-link` and text the link on its own line. It shows every proposal, yes and no in the circle, with no signal contents. It is good to show friends. Treat the link as private to the circle.
+Run `python3 scripts/orbit.py log-link` and text the link on its own line. It is a view-only page of the circle: who is in it, the plans, and what each Cubbie did, with no free times, courses or other signal contents. It cannot be used to share, propose or answer, so it is safe to send to judges and friends.
 
 ## Pause and leave
 

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live demo · Orbit</title>
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-135 -135 270 270'%3E%3Crect x='-135' y='-135' width='270' height='270' fill='%23000'/%3E%3Ccircle r='100' fill='none' stroke='%23666' stroke-width='8'/%3E%3Ccircle r='34' fill='%23fff'/%3E%3Ccircle cx='100' r='24' fill='%230B84FE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..750&display=swap">
+<link rel="stylesheet" href="/orbit.css">
+<script src="/orbit.js"></script>
+<style>
+body{background:radial-gradient(70% 50% at 50% 0,rgba(11,132,254,.10),transparent 70%),#000;background-attachment:fixed}
+.stage{--ph-h:clamp(560px,calc(100vh - 242px),820px);display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:clamp(24px,3vw,56px);width:min(1840px,100% - 64px);margin:22px auto 24px;align-items:start}
+.center{display:flex;flex-direction:column;min-width:0;height:calc(var(--ph-h) + 104px);gap:14px}
+.col{display:flex;flex-direction:column;align-items:center;gap:12px}
+.lab{display:flex;align-items:center;gap:10px;font-weight:620;font-size:15px;letter-spacing:-.02em;height:28px}
+.lab img{width:26px;height:26px;border-radius:50%}
+.cap{min-height:52px;max-width:380px;text-align:center;color:var(--mu);font-size:14px;line-height:1.4;letter-spacing:-.005em;transition:color .3s}
+.cap.hot{color:var(--tx)}
+/* phone */
+.phone{--ph-h:inherit;height:var(--ph-h);aspect-ratio:390/844;container-type:size;border-radius:calc(var(--ph-h)*.0555);background:#000;border:1px solid #2a2a2e;box-shadow:0 0 0 6px #0d0d0f,0 0 0 7px #26262a,0 40px 80px -20px rgba(0,0,0,.9),0 0 90px -30px rgba(11,132,254,.45);display:flex;flex-direction:column;overflow:hidden;position:relative;font-size:4.3cqw;transition:box-shadow .5s}
+.phone.act{box-shadow:0 0 0 6px #0d0d0f,0 0 0 7px rgba(11,132,254,.7),0 40px 80px -20px rgba(0,0,0,.9),0 0 110px -20px rgba(11,132,254,.6)}
+.sb{display:flex;justify-content:space-between;align-items:center;padding:3.6cqw 8cqw 0;font-weight:640;font-size:4cqw;height:11cqw;flex:none}
+.sb span:last-child{display:flex;gap:1.4cqw;align-items:center}
+.island{position:absolute;top:2.8cqw;left:50%;width:27cqw;height:7.6cqw;margin-left:-13.5cqw;border-radius:5cqw;background:#000;box-shadow:0 0 0 1px #111;z-index:3}
+.ph-h{display:flex;flex-direction:column;align-items:center;padding:1.5cqw 0 2.5cqw;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(20,20,22,.9);flex:none}
+.ph-h img{width:12cqw;height:12cqw;border-radius:50%}
+.ph-h b{font-size:3.5cqw;font-weight:500;margin-top:1.2cqw;display:flex;gap:1cqw;align-items:center}
+.ph-h b svg{opacity:.5}
+.thread{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:flex-end;gap:1.6cqw;padding:3cqw 3.6cqw 3cqw;overflow:hidden;-webkit-mask-image:linear-gradient(transparent 0,#000 12%);mask-image:linear-gradient(transparent 0,#000 12%)}
+.thread .stamp{align-self:center;font-size:3cqw;color:#8e8e93;margin-bottom:1cqw}
+.thread .b{font-size:4.3cqw}
+.thread .note{align-self:flex-end;font-size:2.9cqw;color:#8e8e93;margin:-.4cqw 1cqw 0}
+.compose{display:flex;gap:2cqw;align-items:center;padding:2cqw 3.6cqw 5cqw;flex:none}
+.compose i{width:8cqw;height:8cqw;border-radius:50%;background:#1c1c1e;flex:none}
+.compose span{flex:1;height:8.6cqw;border:1px solid #38383a;border-radius:5cqw;color:#6d6d72;font-size:3.8cqw;padding:1.5cqw 3.5cqw;line-height:1.7}
+.lockc{align-self:center;width:88%;border:1px solid rgba(48,209,88,.35);background:linear-gradient(160deg,rgba(48,209,88,.14),rgba(48,209,88,.03));border-radius:5cqw;padding:3.6cqw 4cqw;display:flex;gap:3.4cqw;align-items:center;margin-top:1cqw}
+.lockc>svg{flex:none;width:10cqw;height:10cqw;color:var(--green)}
+.lockc b{display:block;font-size:4.4cqw;letter-spacing:-.02em;color:#fff}
+.lockc div>span{display:block;color:#d1d1d6;font-size:3.5cqw}
+.lockc small{display:flex;gap:1.2cqw;align-items:center;color:var(--green);font-size:3.1cqw;margin-top:.6cqw;font-weight:600}
+.lockc.pop{transform-origin:50% 100%}
+/* center */
+.chan{position:relative;height:clamp(170px,22vh,250px);flex:none}
+.chan svg.lanes{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.node{position:absolute;top:50%;width:54px;height:54px;margin-top:-27px;border-radius:50%;background:#111;border:1px solid var(--line2);display:grid;place-items:center;transition:box-shadow .3s,border-color .3s}
+.node img{width:44px;height:44px;border-radius:50%}
+.node.l{left:0}.node.r{right:0}
+.node.hit{border-color:var(--blue);box-shadow:0 0 0 6px rgba(11,132,254,.2),0 0 40px rgba(11,132,254,.6)}
+.relay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:64px;height:64px;display:grid;place-items:center}
+.relay svg{width:64px;height:64px}
+.packet{position:absolute;left:0;top:0;offset-rotate:0deg;offset-anchor:50% 50%;opacity:0;z-index:3;pointer-events:none}
+.packet span{display:block;transform:translate(-50%,-50%);padding:7px 13px;border-radius:999px;background:var(--blue);color:#fff;font-size:12.5px;font-weight:620;letter-spacing:-.01em;white-space:nowrap;box-shadow:0 0 0 4px rgba(11,132,254,.25),0 8px 30px rgba(11,132,254,.7)}
+.status{min-height:68px;display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border:1px solid var(--line);border-radius:18px;background:var(--s2);flex:none}
+.status .chip{flex:none;margin-top:1px}
+.status p{font-size:15px;line-height:1.4;letter-spacing:-.012em}
+.status p.idle{color:var(--mu)}
+.ctrl{display:flex;flex-direction:column;align-items:center;gap:12px;flex:none}
+.ctrl .row{display:flex;gap:12px;align-items:center;justify-content:center;width:100%}
+.prog{display:flex;gap:5px;width:100%}
+.prog i{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.1);transition:background .4s}
+.prog i.on{background:var(--blue)}
+.badge{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--mu)}
+.err{width:100%;padding:12px 16px;border-radius:14px;background:rgba(255,69,58,.1);border:1px solid rgba(255,69,58,.3);color:#ffb3ad;font-size:14px;text-align:center}
+.logbox{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:22px;background:var(--s1);overflow:hidden}
+.logbox header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);font-weight:620;font-size:14.5px;letter-spacing:-.015em}
+.logbox header span{color:var(--mu);font-weight:450;font-size:13px}
+.logbox .scroll{flex:1;overflow:auto;padding:4px 20px}
+.logbox .scroll::-webkit-scrollbar{width:0}
+.hide{display:none!important}
+.big{height:60px}
+@media (max-width:1100px){
+ .stage{grid-template-columns:1fr;width:calc(100% - 32px);margin-top:16px;gap:30px;justify-items:center}
+ .col{width:100%}.chan,.status,.ctrl,.logbox{width:100%}
+ .center{display:contents}
+ .phone{height:auto;width:min(100%,340px);aspect-ratio:390/760}
+ .chan{height:150px;order:4}.status{order:2}
+ #colL{order:3}#colR{order:5}.ctrlwrap{order:1}.logbox{order:6;height:420px;flex:none}
+ .links a:not(.btn){display:none}
+ .node{width:46px;height:46px;margin-top:-23px}.node img{width:38px;height:38px}
+}
+</style>
+</head>
+<body>
+<header class="nav"><div class="wrap" style="width:min(1840px,100% - 64px)">
+  <a class="brand" href="/" aria-label="Orbit home"><script>document.write(O.mark(28))</script>Orbit</a>
+  <nav class="links"><a href="/#protocol">How agents coordinate</a><a href="https://github.com/Manavpatel06/Orbit" target="_blank" rel="noopener">GitHub</a><a class="btn sm" href="/">Back to Orbit</a></nav>
+</div></header>
+
+<main class="stage" id="stage">
+  <section class="col" id="colL" aria-label="Manav's Cubbie">
+    <div class="lab"><img src="/cubbie.png" alt="">Manav’s Cubbie</div>
+    <div class="phone" id="phL"></div>
+    <p class="cap" id="capL" aria-live="polite">Waiting for the demo to start.</p>
+  </section>
+
+  <div class="center" id="center">
+    <div class="chanwrap" style="display:contents"><div class="chan" id="chan" aria-hidden="true">
+      <svg class="lanes" id="lanes"></svg>
+      <div class="node l" id="nL"><img src="/cubbie.png" alt=""></div>
+      <div class="relay"></div>
+      <div class="node r" id="nR"><img src="/cubbie.png" alt=""></div>
+    </div></div>
+    <div class="status" id="status"><span class="chip grey" id="who"><i></i>Idle</span><p class="idle" id="stx">Two Cubbies, two students, one study session to schedule. Press start and watch the agents handle it.</p></div>
+    <div class="ctrl ctrlwrap" id="ctrl">
+      <div class="prog" id="prog" aria-hidden="true"></div>
+      <div class="row"><button class="btn pri lg" id="go" type="button">Start live demo</button><button class="btn lg hide" id="replay" type="button"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 0 2-4.5M4 3.5v3.2h3.2"/></svg>Replay</button></div>
+      <div class="err hide" id="err" role="alert"></div>
+      <div class="badge"><span class="live"></span>Running on the live Orbit server · real API calls</div>
+    </div>
+    <section class="logbox" aria-label="Circle log"><header>Circle log<span id="logn">Live from the relay</span></header><div class="scroll"><ol class="log" id="log"></ol><p class="empty" id="logempty">Every agent step and student decision appears here.</p></div></section>
+  </div>
+
+  <section class="col" id="colR" aria-label="Manas's Cubbie">
+    <div class="lab"><img src="/cubbie.png" alt="">Manas’s Cubbie</div>
+    <div class="phone" id="phR"></div>
+    <p class="cap" id="capR" aria-live="polite">Waiting for the demo to start.</p>
+  </section>
+</main>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function(){
+var $=function(s){return document.querySelector(s)};
+var CAL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4"/></svg>';
+function phone(el,name){
+  el.innerHTML='<div class="island"></div><div class="sb"><span>9:41</span><span><svg width="18" height="11" viewBox="0 0 18 11" fill="#fff"><rect y="7" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="6" rx="1"/><rect x="10" y="2.5" width="3" height="8.5" rx="1"/><rect x="15" width="3" height="11" rx="1"/></svg><svg width="26" height="12" viewBox="0 0 26 12"><rect x=".5" y=".5" width="22" height="11" rx="3.5" fill="none" stroke="#fff" opacity=".4"/><rect x="2" y="2" width="19" height="8" rx="2" fill="#fff"/></svg></span></div>'+
+  '<div class="ph-h"><img src="/cubbie.png" alt=""><b>Cubbie <svg width="7" height="11" viewBox="0 0 7 11" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M1 1l4.5 4.5L1 10"/></svg></b></div>'+
+  '<div class="thread"></div><div class="compose"><i></i><span>iMessage</span></div>';
+  return el.querySelector('.thread')}
+var thL=phone($('#phL')),thR=phone($('#phR'));
+var TH={left:thL,right:thR},PH={left:$('#phL'),right:$('#phR')},CAP={left:$('#capL'),right:$('#capR')};
+var NAMES={left:'Manav',right:'Manas'};
+function stamp(){[thL,thR].forEach(function(t){t.innerHTML='<div class="stamp">Today 9:41 AM</div>'})}
+stamp();
+var run=0,sid=null,code=null,view=null,total=10,seen={};
+var mobile=function(){return matchMedia('(max-width:1100px)').matches};
+
+/* lanes */
+function geom(){var c=$('#chan'),w=c.clientWidth,h=c.clientHeight,r=mobile()?23:27,x0=r+8,x1=w-r-8,y=h/2,up=-h*.1,dn=h*1.1;
+  return{w:w,h:h,top:'M'+x0+','+y+' C'+(w*.3)+','+up+' '+(w*.7)+','+up+' '+x1+','+y,bot:'M'+x1+','+y+' C'+(w*.7)+','+dn+' '+(w*.3)+','+dn+' '+x0+','+y}}
+function drawLanes(){var g=geom();$('#lanes').setAttribute('viewBox','0 0 '+g.w+' '+g.h);
+  $('#lanes').innerHTML='<defs><linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#0B84FE" stop-opacity=".6"/><stop offset="1" stop-color="#fff" stop-opacity=".18"/></linearGradient></defs><path d="'+g.top+'" fill="none" stroke="url(#lg)" stroke-width="1.5" stroke-dasharray="2 7" stroke-linecap="round"/><path d="'+g.bot+'" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="1.5" stroke-dasharray="2 7" stroke-linecap="round"/><g transform="translate('+g.w/2+','+g.h/2+')">'+(O.mark(64).replace('<svg','<svg x="-32" y="-32"').replace('class="mark "','class="mark"'))+'</g>'}
+function relayMark(){/* drawn inside lanes svg */}
+function packet(dir,label){
+  if(O.reduced){hit(dir==='lr'?'#nR':'#nL');return O.sleep(500)}
+  var g=geom(),p=document.createElement('div');p.className='packet';p.innerHTML='<span>'+O.esc(label)+'</span>';
+  p.style.offsetPath="path('"+(dir==='lr'?g.top:g.bot)+"')";$('#chan').appendChild(p);
+  var a=p.animate([{offsetDistance:'0%',opacity:0,scale:.6},{opacity:1,scale:1,offset:.12},{opacity:1,offset:.88},{offsetDistance:'100%',opacity:0,scale:.8}],{duration:1150,easing:'cubic-bezier(.45,.05,.3,1)',fill:'forwards'});
+  return a.finished.then(function(){p.remove();hit(dir==='lr'?'#nR':'#nL')},function(){p.remove()})}
+function hit(s){var n=$(s);n.classList.add('hit');setTimeout(function(){n.classList.remove('hit')},700)}
+drawLanes();addEventListener('resize',drawLanes);
+
+/* thread */
+function add(side,text,from,extra){var t=TH[side],d=document.createElement('div');d.className='b pop '+(from==='student'?'out':'in');d.textContent=text;t.appendChild(d);
+  if(extra){var n=document.createElement('div');n.className='note';n.textContent=extra;t.appendChild(n)}return d}
+function typing(side){var t=TH[side],d=document.createElement('div');d.className='b in pop typing';d.innerHTML='<i></i><i></i><i></i>';t.appendChild(d);return d}
+function lock(side,plan){var text='';var d=document.createElement('div');d.className='lockc pop';
+  d.innerHTML=CAL+'<div><b>Locked in</b><span>'+O.esc((plan&&plan.title)||'Study session')+'</span><span>'+O.esc([plan&&plan.date,plan&&plan.time].filter(Boolean).join(' · ')||text||'')+'</span><small><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>Added to your calendar</small></div>';
+  TH[side].appendChild(d)}
+function act(side){['left','right'].forEach(function(s){PH[s].classList.toggle('act',s===side||side==='both')})}
+function cap(side,text,hot){CAP[side].textContent=text;CAP[side].classList.toggle('hot',!!hot)}
+function who(actor){var m={manav_cubbie:["Manav’s Cubbie",'blue'],manas_cubbie:["Manas’s Cubbie",'blue'],reya_cubbie:["Reya’s Cubbie",'blue'],manav:['Manav','green'],manas:['Manas','green'],orbit:['Orbit relay','amber']}[actor]||[actor||'Orbit','grey'];
+  var e=$('#who');e.className='chip '+m[1];e.innerHTML='<i></i>'+O.esc(m[0])}
+
+/* log */
+function renderLog(list,first){var ol=$('#log'),n=0;
+  var keys=list.map(function(e){return(e.ts||'')+'|'+e.text});
+  var fresh=!ol.children.length;
+  ol.textContent='';list.forEach(function(e,i){var k=keys[i];var isNew=!fresh&&!seen[k];seen[k]=1;ol.appendChild(O.logItem(e,isNew))});
+  $('#logempty').classList.toggle('hide',list.length>0);$('#logn').textContent=list.length+' entries · live from the relay'}
+function board(){if(!code)return Promise.resolve();return O.api('/circles/'+encodeURIComponent(code)+'/board?v='+encodeURIComponent(view)).then(function(b){if(b&&b.log)renderLog(b.log)}).catch(function(){})}
+
+/* controls */
+function prog(n){var p=$('#prog');if(p.children.length!==total){p.innerHTML=new Array(total+1).join('<i></i>')}[].forEach.call(p.children,function(e,i){e.classList.toggle('on',i<n)})}
+function showErr(m){var e=$('#err');e.textContent=m;e.classList.toggle('hide',!m)}
+function errMsg(e){if(e&&e.status===429)return'The demo is busy right now (limit: 20 starts per 10 minutes per network). Wait a minute, then press Start again.';
+  if(e&&e.status>=500)return'The Orbit server hit a problem starting the demo. Try again in a moment.';return'Couldn’t reach the Orbit server. Check your connection and try again.'}
+
+function label(s){var t=(s.text||'').toLowerCase();if(/busy|moved/.test(t))return'busy · moved to Thu';if(/received|inbox/.test(t))return'proposal delivered';if(/propos/.test(t))return'proposal · Tue / Thu evening';if(/lock|plan/.test(t))return'plan locked';return'update'}
+function dirOf(s){var t=(s.text||'').toLowerCase();if(/received|inbox/.test(t))return'lr';if(s.actor==='manas_cubbie'||s.actor==='manas')return'rl';return'lr'}
+function scrollTo(side){if(!mobile())return;PH[side].scrollIntoView({behavior:O.reduced?'auto':'smooth',block:'center'})}
+
+function lockInfo(t){var l=String(t).split('\n')[0].replace(/^Locked in:\s*/i,'').split(' \u00B7 ');return{title:l[0]||'Study session',date:l[1],time:l[2]}}
+async function play(s,my){
+  prog(s.step);who(s.actor);var other={left:'right',right:'left'};
+  var bubbles=s.bubbles&&s.bubbles.length?s.bubbles:[].concat(s.bubble||[]);
+  $('#stx').className='';$('#stx').textContent=s.text||(bubbles[0]&&bubbles[0].text)||'';
+  if(!bubbles.length){
+    act('none');var d=dirOf(s),a=d==='lr'?'left':'right',b=other[a];
+    cap(a,s.text,1);cap(b,'Not interrupted. The agents are handling this.',0);
+    await packet(d,label(s));if(my!==run)return;await board();return}
+  var locked=bubbles.some(function(x){return/^Locked in/i.test(x.text)});
+  if(locked){act('both');cap('left','Locked in. Added to Manav’s calendar.',1);cap('right','Locked in. Added to Manas’s calendar.',1)}
+  for(var i=0;i<bubbles.length;i++){var bb=bubbles[i],side=bb.side==='right'?'right':'left';
+    if(/^Locked in/i.test(bb.text)){var li=lockInfo(bb.text);lock(side,li);if(i===bubbles.length-1)await O.sleep(250);continue}
+    act(side);scrollTo(side);
+    if(bb.from==='cubbie'){var last=i===bubbles.length-1,note=last&&s.note?s.note:null;
+      cap(side,note?'Cubbie drafts the text. '+NAMES[side]+' sends it himself.':'Cubbie asks '+NAMES[side]+' once, at the right moment.',1);cap(other[side],NAMES[other[side]]+' isn’t interrupted.',0);
+      var ty=typing(side);await O.sleep(O.reduced?100:650);if(my!==run)return;ty.remove();add(side,bb.text,'cubbie',note)}
+    else{cap(side,NAMES[side]+' answers.',1);add(side,bb.text,'student')}
+    if(i<bubbles.length-1)await O.sleep(350)}
+  if(my!==run)return;await board()}
+async function start(){
+  var my=++run;showErr('');$('#go').disabled=true;$('#go').textContent='Starting…';
+  ['#log'].forEach(function(s){$(s).textContent=''});seen={};$('#logempty').classList.remove('hide');$('#logn').textContent='Live from the relay';
+  stamp();act('none');cap('left','Connecting to the Orbit server…',0);cap('right','Connecting to the Orbit server…',0);
+  var d;try{d=await O.api('/demo/start',{method:'POST'})}catch(e){if(my!==run)return;showErr(errMsg(e));$('#go').disabled=false;$('#go').textContent='Start live demo';cap('left','Waiting for the demo to start.',0);cap('right','Waiting for the demo to start.',0);return}
+  if(my!==run)return;sid=d.demo_id;code=d.code;view=d.view_v;total=d.steps_total||10;prog(0);
+  $('#go').classList.add('hide');$('#replay').classList.add('hide');$('#go').disabled=false;$('#go').textContent='Start live demo';
+  $('#stx').textContent='Demo circle '+code+' created on the live server.';who('orbit');await board();await O.sleep(700);
+  for(;;){if(my!==run)return;var t0=performance.now(),s;
+    try{s=await O.api('/demo/'+encodeURIComponent(sid)+'/step',{method:'POST'})}catch(e){if(my!==run)return;showErr(errMsg(e));$('#replay').classList.remove('hide');return}
+    if(my!==run)return;await play(s,my);if(my!==run)return;
+    if(s.done)break;await O.sleep(Math.max(300,1800-(performance.now()-t0)))}
+  act('none');await board();who('orbit');$('#stx').textContent='Done. Two Cubbies settled a conflict, and each student was asked once.';
+  cap('left','Plan on the calendar. Reya’s check-in is waiting for Manav to send.',0);cap('right','Plan on the calendar.',0);$('#replay').classList.remove('hide')}
+$('#go').addEventListener('click',start);
+$('#replay').addEventListener('click',function(){window.scrollTo({top:0});start()});
+if(/[?&]autostart=1/.test(location.search))start();
+})();
+</script>
+</body>
+</html>

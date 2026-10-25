@@ -3,7 +3,7 @@
 
 Talks to the Orbit relay (JSON over HTTPS). State (circles, tokens, consent, and small
 bookkeeping such as seen items) is kept in ~/.config/orbit/state.json with mode 600. The
-token is never printed except inside the log-link URL fragment. Keys added after v1 are
+token is never printed, except inside the old-server fallback log-link URL fragment. Keys added after v1 are
 created lazily, so an existing v1 state file keeps working unchanged.
 
 Exit codes: 0 ok, 2 not in a circle, 3 circle/proposal not found, 4 server unreachable,
@@ -770,7 +770,13 @@ def cmd_log(args, st: dict) -> None:
 
 def cmd_log_link(args, st: dict) -> None:
     code, circ = pick_circle(st, args.circle)
-    url = f"{server_url(st)}/?c={code}#k={circ['token']}"
+    url = None
+    try:  # read-only view link from the server; older servers (or no network) fall back to the private token link
+        url = get_members(st, code, circ).get("view_url")
+    except SystemExit:
+        pass
+    if not url:
+        url = f"{server_url(st)}/?c={code}#k={circ['token']}"
     if args.json:
         emit({"url": url})
     else:

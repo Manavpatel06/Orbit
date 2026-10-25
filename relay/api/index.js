@@ -93,6 +93,47 @@ const kindOf = (e) => e.kind || DEFAULT_KIND[e.type] || 'system';
 const log = (store, code, actor, type, text, actor_id, kind) => store.addLog({ circle_code: code, ts: new Date(), actor, actor_id: actor_id || null, type, kind: kind || DEFAULT_KIND[type] || 'system', text });
 const todayParam = (v) => (v === undefined || v === null || v === '' ? new Date().toISOString().slice(0, 10) : L.isISODate(v) ? v : (() => { throw new HttpError(400, 'bad_today', 'today must be an ISO date (YYYY-MM-DD).'); })());
 
+const newViewKey = () => crypto.randomBytes(12).toString('hex');
+const TIMEOUT_MS = 24 * 3600 * 1000;
+const FAKE_REQ = { headers: {}, socket: {} };
+
+/** Public origin of this deployment, from the request headers. */
+function originOf(req) {
+  const h = req.headers || {};
+  const host = String(h['x-forwarded-host'] || h.host || 'orbit-cubbie.vercel.app').split(',')[0].trim();
+  const local = /^(localhost|127\.|\[::1\])/.test(host);
+  const proto = String(h['x-forwarded-proto'] || (local ? 'http' : 'https')).split(',')[0].trim();
+  return `${proto}://${host}`;
+}
+
+/** Read-only access with a circle's view key (?v=). Returns the circle; 401 on any mismatch. */
+async function viewAuth(ctx, code) {
+  const v = ctx.query.get('v');
+  const circle = await ctx.store.getCircle(code);
+  if (!circle) throw new HttpError(404, 'code_not_found', 'No circle with that code.');
+  const a = Buffer.from(String(v));
+  const b = Buffer.from(String(circle.view_key || ''));
+  if (!v || !circle.view_key || !/^[0-9a-f]{24}$/.test(v) || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    throw new HttpError(401, 'bad_view_key', 'That view link is not valid.');
+  }
+  return circle;
+}
+
+/** Inserts a circle under a fresh unique code (with a view key). `nameFor(code)` gives its name. */
+async function allocCircle(store, nameFor, extra = {}) {
+  for (let i = 0; i < 10; i++) {
+    const code = newCode();
+    const circle = { code, name: nameFor(code), created_at: new Date(), view_key: newViewKey(), ...extra };
+    try {
+      await store.createCircle(circle);
+      return circle;
+    } catch (e) {
+      if (!e.dup) throw e;
+    }
+  }
+  throw new HttpError(500, 'code_exhausted', 'Could not allocate a circle code, try again.');
+}
+
 async function addMember(store, code, name) {
   const token = crypto.randomBytes(32).toString('hex');
   const m = { circle_code: code, member_id: crypto.randomBytes(4).toString('hex'), name, token_hash: sha256(token), joined_at: new Date(), paused: false };
@@ -119,6 +160,36 @@ function liveSignals(signals, members, now = new Date()) {
   return map;
 }
 
+/**
+ * Lazy 24 h timeout, run whenever proposals are read. Open group proposals drop non-responders if at least one invitee said yes
+ * (plan set for the rest); anything else open for more than 24 h expires. Returns the proposals with updates applied.
+ */
+async function sweepProposals(store, proposals) {
+  const out = [];
+  let names = null;
+  for (const p of proposals) {
+    if (p.status !== 'open' || Date.now() - new Date(p.created_at).getTime() <= TIMEOUT_MS) { out.push(p); continue; }
+    if (!names) names = new Map((await store.listMembers(p.circle_code)).map((m) => [m.member_id, m.name]));
+    const yes = p.to_ids.filter((i) => p.responses[i] === 'yes');
+    let next;
+    if (p.to_ids.length >= 2 && yes.length) {
+      const date = p.date || L.windowDate(p.window, String(iso(p.created_at)).slice(0, 10));
+      const time = p.time || L.canonTime(p.window);
+      next = await store.transitionProposal(p.id, { status: 'open' }, { to_ids: yes, status: 'accepted', date, time, updated_at: new Date(), change: 'accepted' });
+      if (next) {
+        const dropped = p.to_ids.filter((i) => !yes.includes(i)).map((i) => names.get(i) || FORMER).join(' and ');
+        const what = `${p.kind === 'study' ? (p.course ? `Study ${p.course}` : 'Study session') : 'Hangout'} · ${L.prettyDate(date)} · ${L.prettyTime(time)}`;
+        await log(store, p.circle_code, 'Orbit', 'accepted', `${dropped} didn't answer in time; plan set for the rest. Plan set: ${what}`, null, 'system');
+      }
+    } else {
+      next = await store.transitionProposal(p.id, { status: 'open' }, { status: 'expired', updated_at: new Date(), change: 'expired' });
+      if (next) await log(store, p.circle_code, 'Orbit', 'expired', 'No answer in 24 h; plan expired.', null, 'system');
+    }
+    out.push(next || (await store.getProposal(p.id)) || p);
+  }
+  return out;
+}
+
 function proposalView(p, names, me) {
   return {
     id: p.id, circle_code: p.circle_code, from_id: p.from_id, from_name: names.get(p.from_id) || FORMER,
@@ -136,17 +207,7 @@ const H = {
     rateLimit(ctx.req);
     const name = L.sanitizeName(ctx.body.name, 40, 'name');
     const memberName = L.sanitizeName(ctx.body.member_name, 24, 'member_name');
-    let code;
-    for (let i = 0; i < 10 && !code; i++) {
-      const c = newCode();
-      try {
-        await ctx.store.createCircle({ code: c, name, created_at: new Date() });
-        code = c;
-      } catch (e) {
-        if (!e.dup) throw e;
-      }
-    }
-    if (!code) throw new HttpError(500, 'code_exhausted', 'Could not allocate a circle code, try again.');
+    const { code } = await allocCircle(ctx.store, () => name);
     const { member, token } = await addMember(ctx.store, code, memberName);
     await log(ctx.store, code, memberName, 'joined', `${memberName} started the circle.`, member.member_id);
     return [200, { code, name, member_id: member.member_id, token }];
@@ -157,6 +218,7 @@ const H = {
     const memberName = L.sanitizeName(ctx.body.member_name, 24, 'member_name');
     const circle = await ctx.store.getCircle(code);
     if (!circle) throw new HttpError(404, 'code_not_found', 'No circle with that code.');
+    if (circle.demo) throw new HttpError(403, 'demo_circle', 'This is a demo circle; you cannot join it.');
     const members = await ctx.store.listMembers(code);
     if (members.length >= MAX_MEMBERS) throw new HttpError(409, 'circle_full', `This circle already has ${MAX_MEMBERS} members.`);
     if (members.some((m) => m.name.toLowerCase() === memberName.toLowerCase())) throw new HttpError(409, 'name_taken', 'Someone in this circle already uses that name. Pick another.');
@@ -169,8 +231,10 @@ const H = {
     await authMember(ctx.store, ctx.token, code);
     const [circle, members, signals] = await Promise.all([ctx.store.getCircle(code), ctx.store.listMembers(code), ctx.store.listSignals(code)]);
     const live = new Map(signals.filter((s) => L.isLive(s)).map((s) => [s.member_id, s]));
+    const viewKey = circle.view_key || (await ctx.store.ensureViewKey(code, newViewKey()));
     return [200, {
       code, name: circle.name,
+      view_url: `${originOf(ctx.req)}/circle?c=${code}&v=${viewKey}`,
       members: members.map((m) => ({ member_id: m.member_id, name: m.name, paused: !!m.paused, has_signal: live.has(m.member_id), updated_at: iso(live.get(m.member_id)?.updated_at) })),
     }];
   },
@@ -187,7 +251,8 @@ const H = {
   async feed(ctx, code) {
     const me = await authMember(ctx.store, ctx.token, code);
     const today = todayParam(ctx.query.get('today'));
-    const [members, signals, proposals] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code)]);
+    const [members, signals, proposalsRaw] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code)]);
+    const proposals = await sweepProposals(ctx.store, proposalsRaw);
     const live = liveSignals(signals, members);
     const allSignals = new Map(signals.filter((s) => L.isLive(s)).map((s) => [s.member_id, s]));
     const mySig = allSignals.get(me.member_id) || null;
@@ -229,8 +294,9 @@ const H = {
 
   async respond(ctx, id) {
     const me = await authMember(ctx.store, ctx.token);
-    const p = await ctx.store.getProposal(id);
+    let p = await ctx.store.getProposal(id);
     if (!p || p.circle_code !== me.circle_code) throw new HttpError(404, 'proposal_not_found', 'No such proposal.');
+    [p] = await sweepProposals(ctx.store, [p]);
     if (!p.to_ids.includes(me.member_id)) throw new HttpError(404, 'not_recipient', 'That proposal was not addressed to you.');
     const answer = ctx.body.answer;
     if (answer !== 'yes' && answer !== 'no' && answer !== 'busy') throw new HttpError(400, 'bad_answer', 'answer must be yes, no or busy.');
@@ -291,7 +357,9 @@ const H = {
       const round = p.round || 1;
       let win = null;
       if (myFree && round < L.MAX_ROUNDS) {
-        win = (p.windows || []).find((w) => !excluded.has(w) && myFree.includes(w)) || null;
+        // group plans: a window must be free for the proposer and ALL invitees (those with a live signal)
+        const allFree = (w) => p.to_ids.length < 2 || parts.every((i) => { const f = i === me.member_id ? myFree : (live.get(i) || {}).free; return !f || f.includes(w); });
+        win = (p.windows || []).find((w) => !excluded.has(w) && myFree.includes(w) && allFree(w)) || null;
         if (!win) {
           const sigs = parts.map((i) => (i === me.member_id ? { free: myFree } : live.get(i)));
           if (sigs.every(Boolean)) win = L.nextBestWindow(sigs, { declined: [...excluded], today, beforeDate: beforeDateFor(sigs) });
@@ -340,7 +408,8 @@ const H = {
     const sinceRaw = ctx.query.get('since');
     const since = sinceRaw ? new Date(sinceRaw) : new Date(0);
     if (Number.isNaN(since.getTime())) throw new HttpError(400, 'bad_since', 'since must be an ISO timestamp.');
-    const [members, signals, proposals] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code)]);
+    const [members, signals, proposalsRaw] = await Promise.all([ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code)]);
+    const proposals = await sweepProposals(ctx.store, proposalsRaw);
     const names = new Map(members.map((m) => [m.member_id, m.name]));
     const cutoff = Date.now() - 7 * 86400000;
     const recent = proposals.filter((p) => new Date(p.created_at).getTime() >= cutoff);
@@ -393,7 +462,8 @@ const H = {
 
   async getLog(ctx, code) {
     const k = ctx.query.get('k');
-    await authMember(ctx.store, ctx.token || (k && /^[A-Za-z0-9]{16,128}$/.test(k) ? k : null), code);
+    if (!ctx.token && !k && ctx.query.get('v') !== null) await viewAuth(ctx, code);
+    else await authMember(ctx.store, ctx.token || (k && /^[A-Za-z0-9]{16,128}$/.test(k) ? k : null), code);
     const limit = Math.min(100, Math.max(1, parseInt(ctx.query.get('limit') || '30', 10) || 30));
     const [circle, members, entries] = await Promise.all([ctx.store.getCircle(code), ctx.store.listMembers(code), ctx.store.listLog(code, limit)]);
     return [200, {
@@ -402,7 +472,193 @@ const H = {
       entries: entries.map((e) => ({ ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text })),
     }];
   },
+
+  /** Judge-safe read-only board: who is in the circle (busy level only), recent plans, the agent log, and counters. */
+  async board(ctx, code) {
+    if (!ctx.token && ctx.query.get('v') !== null) await viewAuth(ctx, code);
+    else await authMember(ctx.store, ctx.token, code);
+    const [circle, members, signals, proposalsRaw, entries, moves] = await Promise.all([
+      ctx.store.getCircle(code), ctx.store.listMembers(code), ctx.store.listSignals(code), ctx.store.listProposals(code),
+      ctx.store.listLog(code, 60), ctx.store.countLog(code, ['moved', 'countered']),
+    ]);
+    const proposals = await sweepProposals(ctx.store, proposalsRaw);
+    const live = liveSignals(signals, members);
+    const names = new Map(members.map((m) => [m.member_id, m.name]));
+    const cutoff = Date.now() - 14 * 86400000;
+    return [200, {
+      name: circle.name,
+      members: members.map((m) => {
+        const s = live.get(m.member_id);
+        return { name: m.name, ...(s && s.busy ? { busy: s.busy } : {}), updated_at: iso(s && s.updated_at) };
+      }),
+      plans: proposals.filter((p) => new Date(p.created_at).getTime() >= cutoff)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .map((p) => ({
+          kind: p.kind, course: p.course || null, date: p.date || null, time: p.time || null, status: p.status, round: p.round || 1,
+          from_name: names.get(p.from_id) || FORMER, to_names: p.to_ids.map((i) => names.get(i) || FORMER), created_at: iso(p.created_at),
+        })),
+      log: entries.map((e) => ({ ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text })),
+      stats: { proposals: proposals.length, locked: proposals.filter((p) => p.status === 'accepted').length, agent_moves: moves },
+    }];
+  },
+
+  async stats(ctx) {
+    if (!statsCache || statsCache.store !== ctx.store || Date.now() - statsCache.t > 30000) {
+      statsCache = { store: ctx.store, t: Date.now(), data: { ...(await ctx.store.stats()), updated_at: nowIso() } };
+    }
+    return [200, statsCache.data];
+  },
+
+  async demoStart(ctx) {
+    demoRateLimit(ctx.req);
+    const store = ctx.store;
+    // lazy cleanup: demo circles (and their data) older than 24 h
+    for (const old of await store.listDemoCircles(new Date(Date.now() - 24 * 3600 * 1000))) await store.deleteCircleAll(old.code);
+    const circle = await allocCircle(store, (c) => `Demo · ${c}`, { demo: true, expires_at: new Date(Date.now() + 24 * 3600 * 1000) });
+    const code = circle.code;
+    const today = demoToday();
+    const quiz = L.windowDate('fri-evening', today);
+    const week_of = L.weekMonday(today);
+    const people = [
+      ['manav', 'Manav', { week_of, busy: 'busy', free: ['tue-evening', 'thu-evening'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
+      // Manas's coarse estimate still shows Tue evening as open; his calendar says otherwise (step 5)
+      ['manas', 'Manas', { week_of, busy: 'busy', free: ['tue-evening', 'thu-evening', 'sat-afternoon'], courses: [{ code: 'CSE 576', events: [{ kind: 'quiz', title: 'Quiz 2', date: quiz }] }] }],
+      ['reya', 'Reya', { week_of, busy: 'packed', big_days: [L.addDays(today, 1)], free: ['wed-evening'], wins: ['Finished my capstone draft'], courses: [{ code: 'BIO 201', events: [{ kind: 'exam', title: 'Midterm', date: L.addDays(today, 1) }] }] }],
+    ];
+    const ids = {};
+    const tokens = {};
+    for (const [key, name, sig] of people) {
+      const { member, token } = await addMember(store, code, name);
+      ids[key] = member.member_id;
+      tokens[key] = token;
+      await log(store, code, name, 'joined', key === 'manav' ? `${name} started the circle.` : `${name} joined the circle.`, member.member_id);
+      await demoCall(store, H.putSignal, token, sig, {}, code);
+    }
+    const demo_id = crypto.randomBytes(6).toString('hex');
+    await store.insertDemo({ demo_id, circle_code: code, step: 0, today, ids, tokens, proposal_id: null, created_at: new Date() });
+    return [200, { demo_id, code, view_v: circle.view_key, steps_total: DEMO_STEPS }];
+  },
+
+  async demoStep(ctx, demoId) {
+    const store = ctx.store;
+    const demo = /^[0-9a-f]{12}$/.test(demoId) ? await store.getDemo(demoId) : null;
+    if (!demo) throw new HttpError(404, 'demo_not_found', 'That demo does not exist or has expired.');
+    if (demo.step >= DEMO_STEPS) throw new HttpError(409, 'demo_done', 'The demo already finished. Start a new one.');
+    const n = demo.step + 1;
+    if (!(await store.advanceDemo(demoId, demo.step, n))) throw new HttpError(409, 'demo_busy', 'Another step is already running.');
+    try {
+      return [200, await runDemoStep(store, demo, n)];
+    } catch (e) {
+      await store.advanceDemo(demoId, n, demo.step); // let the viewer retry the same step
+      throw e;
+    }
+  },
 };
+
+let statsCache = null;
+const DEMO_STEPS = 10;
+const demoHits = new Map();
+function demoRateLimit(req) {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'x').split(',')[0].trim();
+  const t = Date.now();
+  const list = (demoHits.get(ip) || []).filter((x) => t - x < 600000);
+  list.push(t);
+  demoHits.set(ip, list);
+  if (demoHits.size > 5000) demoHits.clear();
+  if (list.length > 20) throw new HttpError(429, 'rate_limited', 'Too many demos started, please wait a few minutes.');
+}
+
+/** "Today" for the demo: Phoenix time (UTC-7, no DST); Wed-Sun roll to next Monday so Tue/Thu windows come before the Friday quiz. */
+function demoToday(now = new Date()) {
+  const phoenix = new Date(now.getTime() - 7 * 3600 * 1000).toISOString().slice(0, 10);
+  const d = L.dow(phoenix);
+  return d <= 1 ? phoenix : L.addDays(phoenix, 7 - d);
+}
+
+/** Runs a real handler as a demo member (same code path as a real client). */
+async function demoCall(store, fn, token, body, query, ...args) {
+  const [, data] = await fn({ req: FAKE_REQ, body: body || {}, query: new URLSearchParams(query || {}), token, store }, ...args);
+  return data;
+}
+
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+const dayWord = (token, today) => cap(L.prettyDate(L.windowDate(token, today)).slice(0, 3));
+const winLabel = (token) => cap(L.prettyWindow(token));
+const clock = (hhmm) => L.prettyTime(hhmm).replace(':00', '');
+
+async function runDemoStep(store, demo, n) {
+  const { circle_code: code, today, ids, tokens } = demo;
+  const bub = (side, from, text) => ({ side, from, text });
+  const out = (actor, channel, text, bubbles, extra = {}) => ({ step: n, total: DEMO_STEPS, actor, channel, text, bubble: bubbles[0] || null, bubbles, ...extra, done: n === DEMO_STEPS });
+  const lastLog = async () => {
+    const [e] = await store.listLog(code, 1);
+    return e ? { ts: iso(e.ts), actor: e.actor, type: e.type, kind: kindOf(e), text: e.text } : undefined;
+  };
+  const planOf = (q) => ({ kind: q.kind, course: q.course || null, window: q.window, date: q.date, time: q.time, status: q.status, round: q.round || 1, from_name: q.from_name, to_names: q.to_names });
+  const getPlan = async () => {
+    const members = await store.listMembers(code);
+    const names = new Map(members.map((m) => [m.member_id, m.name]));
+    return proposalView(await store.getProposal(demo.proposal_id), names, null);
+  };
+  const manavFeed = () => demoCall(store, H.feed, tokens.manav, {}, { today }, code);
+  const planLine = (q) => `Study ${q.course} · ${L.prettyDate(q.date)} · ${L.prettyTime(q.time)}`;
+
+  switch (n) {
+    case 1: {
+      const feed = await manavFeed();
+      const sm = feed.suggestions.find((s) => s.type === 'study_match');
+      const friend = feed.friends.find((f) => sm && f.member_id === sm.friend_id);
+      const mine = (await store.getSignal(code, ids.manav)).free;
+      const wins = friend ? L.commonWindows([{ free: mine }, { free: friend.free }], today) : ['tue-evening', 'thu-evening'];
+      const second = wins[1] ? (wins[1].split('-')[1] === wins[0].split('-')[1] ? dayWord(wins[1], today) : winLabel(wins[1])) : null;
+      const text = `You and ${sm ? sm.friend_name : 'Manas'} both have ${sm ? sm.course : 'CSE 576'}, ${sm ? sm.event.kind : 'quiz'} ${sm ? dayWord('fri-evening', today) : 'Fri'}. Study ${winLabel(wins[0])}${second ? `, or ${second}` : ''}?`;
+      return out('manav_cubbie', 'left', text, [bub('left', 'cubbie', text)]);
+    }
+    case 2:
+      return out('manav', 'left', 'yes', [bub('left', 'student', 'yes')]);
+    case 3: {
+      const pr = await demoCall(store, H.propose, tokens.manav, { to: [ids.manas], kind: 'study', course: 'CSE 576', windows: ['tue-evening', 'thu-evening'], today }, {}, code);
+      await store.updateDemo(demo.demo_id, { proposal_id: pr.id });
+      return out('manav_cubbie', 'agents', `Manav's Cubbie proposed Study CSE 576: ${winLabel(pr.windows[0])}, then ${winLabel(pr.windows[1])}.`, [], { log_entry: await lastLog(), plan: planOf(pr) });
+    }
+    case 4: {
+      const inbox = await demoCall(store, H.inbox, tokens.manas, {}, { today }, code);
+      const q = inbox.needs_answer.find((x) => x.id === demo.proposal_id);
+      return out('manas_cubbie', 'agents', `Manas's Cubbie received a proposal${q ? ` from ${q.from_name}'s Cubbie: Study ${q.course}, ${winLabel(q.window)}` : ''}.`, [], q ? { plan: planOf(q) } : {});
+    }
+    case 5: {
+      const r = await demoCall(store, H.respond, tokens.manas, { answer: 'busy', free_windows: ['thu-evening', 'sat-afternoon'], today }, {}, demo.proposal_id);
+      const q = r.proposal;
+      return out('manas_cubbie', 'agents', `Manas's Cubbie checked his calendar: Tue evening is busy. Moved to ${winLabel(q.window)}.`, [], { log_entry: await lastLog(), plan: planOf(q) });
+    }
+    case 6: {
+      const q = await getPlan();
+      const text = `Manav wants to study ${q.course} ${dayWord(q.window, today)} ${clock(q.time)}. You're free then. Lock it in?`;
+      return out('manas_cubbie', 'right', text, [bub('right', 'cubbie', text)], { plan: planOf(q) });
+    }
+    case 7: {
+      const r = await demoCall(store, H.respond, tokens.manas, { answer: 'yes', today }, {}, demo.proposal_id);
+      return out('manas', 'right', 'yes', [bub('right', 'student', 'yes')], { log_entry: await lastLog(), plan: planOf(r.proposal) });
+    }
+    case 8: {
+      const inbox = await demoCall(store, H.inbox, tokens.manav, {}, { today }, code); // Manav's Cubbie sees the accepted plan
+      const q = inbox.updates.find((x) => x.id === demo.proposal_id) || (await getPlan());
+      const text = `Locked in: ${planLine(q)}`;
+      const added = 'Added to your calendar.';
+      return out('orbit', 'left', text, [bub('left', 'cubbie', `${text}\n${added}`), bub('right', 'cubbie', `${text}\n${added}`)], { plan: planOf(q) });
+    }
+    case 9: {
+      const feed = await manavFeed();
+      const c = feed.suggestions.find((s) => s.type === 'check_on');
+      const text = `${c ? c.friend_name : 'Reya'} has a big day tomorrow. Want a short text to send her?`;
+      return out('manav_cubbie', 'left', text, [bub('left', 'cubbie', text)]);
+    }
+    default: {
+      const draft = 'Big day tomorrow, you got this. coffee after? ☕';
+      return out('manav', 'left', draft, [bub('left', 'student', 'yes'), bub('left', 'cubbie', draft)], { note: 'You send it, not the AI.' });
+    }
+  }
+}
 
 function route(method, parts) {
   const [a, b, c] = parts;
@@ -420,8 +676,12 @@ function route(method, parts) {
       if (c === 'resume' && method === 'POST') return [(x, k) => H.setPaused(x, k, false), code];
       if (c === 'leave' && method === 'POST') return [H.leave, code];
       if (c === 'log' && method === 'GET') return [H.getLog, code];
+      if (c === 'board' && method === 'GET') return [H.board, code];
     }
   }
+  if (a === 'stats' && parts.length === 1 && method === 'GET') return [H.stats];
+  if (a === 'demo' && b === 'start' && parts.length === 2 && method === 'POST') return [H.demoStart];
+  if (a === 'demo' && c === 'step' && parts.length === 3 && method === 'POST') return [H.demoStep, b];
   if (a === 'proposals' && parts.length === 3 && c === 'respond' && method === 'POST') return [H.respond, b];
   return null;
 }

@@ -39,7 +39,8 @@ export function windowKey(token, today) {
   return windowOffset(token, today) * 3 + PARTS.indexOf(token.split('-')[1]);
 }
 export function prettyWindow(token) {
-  return token.replace('-', ' ');
+  const t = String(token).replace('-', ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 export const CANON_TIME = { morning: '10:00', afternoon: '14:00', evening: '19:00' };
 export const MAX_ROUNDS = 4;

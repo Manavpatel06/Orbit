@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Circle board · Orbit</title>
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-135 -135 270 270'%3E%3Crect x='-135' y='-135' width='270' height='270' fill='%23000'/%3E%3Ccircle r='100' fill='none' stroke='%23666' stroke-width='8'/%3E%3Ccircle r='34' fill='%23fff'/%3E%3Ccircle cx='100' r='24' fill='%230B84FE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..750&display=swap">
+<link rel="stylesheet" href="/orbit.css">
+<script src="/orbit.js"></script>
+<style>
+body{background:radial-gradient(60% 40% at 50% 0,rgba(11,132,254,.10),transparent 70%),#000;background-attachment:fixed}
+.top{padding:44px 0 28px;display:flex;flex-wrap:wrap;gap:20px 32px;align-items:flex-end;justify-content:space-between}
+.top h1{font-size:clamp(30px,4vw,48px);line-height:1.05;font-weight:670;letter-spacing:-.04em}
+.top .meta{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.ro{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:999px;background:rgba(11,132,254,.12);border:1px solid rgba(11,132,254,.4);color:#6bb8ff;font-size:13px;font-weight:620}
+.kpis{display:flex;gap:0;border:1px solid var(--line);border-radius:18px;background:var(--s2);overflow:hidden}
+.kpis div{padding:14px 24px;border-left:1px solid var(--line)}.kpis div:first-child{border-left:0}
+.kpis b{display:block;font-size:26px;font-weight:650;letter-spacing:-.04em;line-height:1.1;font-variant-numeric:tabular-nums}
+.kpis span{color:var(--mu);font-size:13px}
+.grid{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:28px;padding-bottom:64px;align-items:start}
+.panel{border:1px solid var(--line);border-radius:22px;background:var(--s1);overflow:hidden}
+.panel+.panel{margin-top:20px}
+.panel h2{font-size:15px;font-weight:620;letter-spacing:-.015em;padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.panel h2 span{color:var(--mu);font-weight:450;font-size:13px}
+.mem{display:flex;align-items:center;gap:12px;padding:12px 20px;border-top:1px solid var(--line)}
+.mem:first-of-type{border-top:0}
+.av{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;background:linear-gradient(145deg,#0B84FE,#0a4fa8);flex:none}
+.mem:nth-of-type(2n) .av{background:linear-gradient(145deg,#5e5ce6,#32308f)}.mem:nth-of-type(3n) .av{background:linear-gradient(145deg,#bf5af2,#6b2d8c)}
+.mem b{font-weight:580;letter-spacing:-.015em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.mem small{color:var(--mu);font-size:12px}
+.plan{padding:16px 20px;border-top:1px solid var(--line)}.plan:first-of-type{border-top:0}
+.plan .r{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.plan b{font-weight:620;letter-spacing:-.02em;font-size:16px}
+.plan p{color:var(--mu);font-size:13.5px;margin-top:3px}
+.plan .when{color:#e5e5ea;font-size:14.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+.panel .logwrap{padding:4px 22px}
+.msg{padding:40px 0;text-align:center;color:var(--mu)}
+.foot{color:var(--mu);font-size:13px;text-align:center;padding:0 0 40px;display:flex;gap:10px;justify-content:center;align-items:center}
+@media (max-width:900px){.grid{grid-template-columns:1fr}.kpis{width:100%}.kpis div{flex:1;padding:12px 14px}.links a:not(.btn){display:none}}
+@media (max-width:520px){.wrap{width:calc(100% - 32px)}.panel .logwrap{padding:2px 16px}}
+</style>
+</head>
+<body>
+<header class="nav"><div class="wrap">
+  <a class="brand" href="/" aria-label="Orbit home"><script>document.write(O.mark(28))</script>Orbit</a>
+  <nav class="links"><a href="/demo">Live demo</a><a class="btn sm" href="/">About Orbit</a></nav>
+</div></header>
+<main class="wrap">
+  <div class="top">
+    <div><div class="meta"><span class="ro"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 10S5 4 10 4s8.5 6 8.5 6-3.5 6-8.5 6-8.5-6-8.5-6z"/><circle cx="10" cy="10" r="2.6"/></svg>View-only</span><span class="chip grey" id="mc">Circle</span></div>
+    <h1 id="title">Circle board</h1></div>
+    <div class="kpis" id="kpis" hidden><div><b id="k1">0</b><span>proposals</span></div><div><b id="k2">0</b><span>locked in</span></div><div><b id="k3">0</b><span>agent moves</span></div></div>
+  </div>
+  <div class="msg" id="msg">Loading the circle…</div>
+  <div class="grid" id="grid" hidden>
+    <aside>
+      <section class="panel"><h2>Members<span id="mn"></span></h2><div id="members"></div></section>
+      <section class="panel"><h2>Plans<span>last 14 days</span></h2><div id="plans"></div></section>
+    </aside>
+    <section class="panel"><h2>Agent log<span id="ln"></span></h2><div class="logwrap"><ol class="log" id="log"></ol><p class="empty" id="le" hidden>Nothing here yet.</p></div></section>
+  </div>
+  <p class="foot" id="foot"></p>
+</main>
+<script>
+(function(){
+var $=function(s){return document.querySelector(s)};
+var q=new URLSearchParams(location.search),code=(q.get('c')||'').toUpperCase(),v=q.get('v')||'';
+var k=new URLSearchParams(location.hash.replace(/^#/,'')).get('k')||'';
+if(O.mock&&!code){code='DEMO42';v='mock'}
+var BUSY={light:['green','Light week'],busy:['amber','Busy'],packed:['red','Packed']};
+function fd(d){var m=/^(\d{4})-(\d\d)-(\d\d)$/.exec(d||'');if(!m)return d;return new Date(+m[1],+m[2]-1,+m[3]).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}
+function ft(t){var m=/^(\d\d):(\d\d)$/.exec(t||'');if(!m)return t;var h=+m[1];return (h%12||12)+':'+m[2]+' '+(h<12?'AM':'PM')}
+function msg(t){var m=$('#msg');m.textContent=t;m.hidden=!t}
+function st(p){var s=(p.status||'').toLowerCase(),r=p.round||1;
+  if(/accept|lock|confirm/.test(s))return['green','Locked in'];
+  if(/expir/.test(s))return['grey','Expired'];
+  if(/declin/.test(s))return['red','No shared time'];
+  if(r>1)return['amber','Moving (round '+r+')'];return['blue','Proposed']}
+function norm(d){ // legacy /log shape -> board shape
+  if(d.plans)return d;
+  return{name:d.name,members:(d.members||[]).map(function(m){return typeof m==='string'?{name:m}:m}),plans:[],log:d.entries||[],stats:null}}
+function render(b){
+  b=norm(b);document.title=b.name+' · Orbit board';$('#title').textContent=b.name;
+  $('#mc').textContent='Auto-refreshes every 5 s';
+  $('#grid').hidden=false;msg('');
+  var ms=b.members||[];$('#mn').textContent=ms.length+(ms.length===1?' person':' people');
+  $('#members').innerHTML=ms.map(function(m){var bz=BUSY[m.busy];return '<div class="mem"><span class="av">'+O.esc((m.name||'?').charAt(0).toUpperCase())+'</span><b>'+O.esc(m.name)+'</b>'+(bz?'<span class="chip '+bz[0]+'"><i></i>'+bz[1]+'</span>':'<small>No signal</small>')+'</div>'}).join('')||'<p class="empty">No members yet.</p>';
+  var ps=b.plans||[];
+  $('#plans').innerHTML=ps.map(function(p){var s=st(p),to=(p.to_names||[]).join(', ');
+    return '<div class="plan"><div class="r"><b>'+O.esc((p.kind==='study'?'Study ':'')+(p.course||'Plan'))+'</b><span class="chip '+s[0]+'"><i></i>'+s[1]+'</span></div><p>'+O.esc(p.from_name||'')+(to?' with '+O.esc(to):'')+'</p>'+((p.date||p.time)?'<div class="when">'+O.esc([fd(p.date),ft(p.time)].filter(Boolean).join(' · '))+'</div>':'')+'</div>'}).join('')||'<p class="empty">No plans yet.</p>';
+  if(b.stats){$('#kpis').hidden=false;$('#k1').textContent=b.stats.proposals||0;$('#k2').textContent=b.stats.locked||0;$('#k3').textContent=b.stats.agent_moves||0}
+  var lg=b.log||[];var ol=$('#log');var fresh=!ol.children.length;var prev=render.seen||(render.seen={});
+  ol.textContent='';lg.forEach(function(e){var key=(e.ts||'')+e.text;ol.appendChild(O.logItem(e,!fresh&&!prev[key]));prev[key]=1});
+  $('#le').hidden=lg.length>0;$('#ln').textContent=lg.length+' entries';
+  $('#foot').innerHTML='<span class="live"></span>Updated '+new Date().toLocaleTimeString()}
+function fail(e){if(e&&e.status===404||e&&e.status===401||e&&e.status===403){$('#grid').hidden=true;msg('This link isn’t valid or has expired. Ask the circle’s owner for a fresh view-only link.')}
+  else if(!$('#grid').hidden){$('#foot').textContent='Can’t reach the server. Retrying…'}else msg('Can’t reach the server. Retrying…')}
+function load(){
+  if(!code||(!v&&!k)){msg('This link is missing its circle code or key. Ask your Cubbie for the circle’s view-only link.');return Promise.resolve()}
+  var p=v?O.api('/circles/'+encodeURIComponent(code)+'/board?v='+encodeURIComponent(v)):O.api('/circles/'+encodeURIComponent(code)+'/log?limit=60',{headers:{Authorization:'Bearer '+k}});
+  return p.then(render).catch(fail)}
+load();setInterval(function(){if(!document.hidden)load()},5000);
+})();
+</script>
+</body>
+</html>

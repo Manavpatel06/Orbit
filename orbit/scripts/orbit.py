@@ -366,7 +366,7 @@ def update_line(st: dict, u: dict) -> str:
     if status == "countered":
         return f"Countered: {what_text(u)} ({when_text(u)}) needs a new time."
     if status == "open":  # still open but moved to another window
-        mover = u.get("moved_by_name") or "A friend"
+        mover = u.get("moved_by_name") or "Your friend"
         return f"Update: {mover}'s Cubbie moved your plan to {when_text(u)}."
     return f"Update: {what_text(u)} · {when_text(u)} is {status or 'updated'}."
 

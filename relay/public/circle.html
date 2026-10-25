@@ -101,7 +101,7 @@ function fail(e){if(e&&e.status===404||e&&e.status===401||e&&e.status===403){$('
   else if(!$('#grid').hidden){$('#foot').textContent='Can’t reach the server. Retrying…'}else msg('Can’t reach the server. Retrying…')}
 function load(){
   if(!code||(!v&&!k)){msg('This link is missing its circle code or key. Ask your Cubbie for the circle’s view-only link.');return Promise.resolve()}
-  var p=v?O.api('/circles/'+encodeURIComponent(code)+'/board?v='+encodeURIComponent(v)):O.api('/circles/'+encodeURIComponent(code)+'/log?limit=60',{headers:{Authorization:'Bearer '+k}});
+  var p=v?O.api('/circles/'+encodeURIComponent(code)+'/board?v='+encodeURIComponent(v)):O.api('/circles/'+encodeURIComponent(code)+'/board',{headers:{Authorization:'Bearer '+k}});
   return p.then(render).catch(fail)}
 load();setInterval(function(){if(!document.hidden)load()},5000);
 })();

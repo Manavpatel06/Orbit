@@ -197,6 +197,7 @@ function proposalView(p, names, me) {
     kind: p.kind, course: p.course || null, window: p.window, windows: p.windows || [p.window], date: p.date || null, time: p.time || null,
     round: p.round || 1, note: p.note || '',
     status: p.status, responses: p.responses, parent_id: p.parent_id || null, created_at: iso(p.created_at),
+    moved_by_name: p.moved_by_name || null,
     my_response: me ? p.responses[me] || null : null,
   };
 }
@@ -367,7 +368,7 @@ const H = {
       }
       const checked = `${me.name}'s Cubbie checked their calendar — ${L.prettyWindow(p.window)} is busy.`;
       if (win) {
-        const set = { window: win, date: L.windowDate(win, today), time: L.canonTime(win), responses: { [p.from_id]: 'yes' }, round: round + 1, tried: [...excluded, win], updated_at: new Date(), change: 'moved' };
+        const set = { window: win, date: L.windowDate(win, today), time: L.canonTime(win), responses: { [p.from_id]: 'yes' }, round: round + 1, tried: [...excluded, win], updated_at: new Date(), change: 'moved', moved_by_name: me.name };
         const moved = await ctx.store.transitionProposal(id, { status: 'open', window: p.window }, set);
         if (!moved) return view((await ctx.store.getProposal(id)) || p); // someone else moved/closed it first
         await log(ctx.store, code, me.name, 'moved', `${checked} Moved to ${L.prettyWindow(win)}.`, me.member_id, 'agent');
